@@ -9,23 +9,40 @@ import math
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import re
 import json
+import numpy as np
+
 
 # Function to clean and process the title based on the city name
 def clean_title(title, city):
+    # Handle empty title or city cases
+    if not title:
+        return title
+
+    # Remove unwanted quotation marks
     title = title.replace('"', '').replace("'", "")
+
+    # Split title into words and decapitalize where needed
     words = title.split()
     decapitalized_title = []
+
     for word in words:
-        if word.isupper() and len(word) > 2:
+        if word.isupper() and len(word) > 2:  # Decapitalize words that are all uppercase
             decapitalized_word = word.lower().capitalize()
             decapitalized_title.append(decapitalized_word)
         else:
             decapitalized_title.append(word)
+
+    # Join words back into the title
     title = ' '.join(decapitalized_title)
-    city_pattern = re.compile(r'\b' + re.escape(city) + r'\b', re.IGNORECASE)
-    if city_pattern.search(title):
-        title = city_pattern.sub(city.upper(), title)
+
+    # Ensure non-empty city for the pattern matching
+    if city:
+        city_pattern = re.compile(r'\b' + re.escape(city) + r'\b', re.IGNORECASE)
+        if city_pattern.search(title):
+            title = city_pattern.sub(city.upper(), title)  # Replace city name with uppercase
+
     return title
+
 
 # Function to save postcards details to a CSV file
 def save_postcards_to_csv(postcards_details):
@@ -35,7 +52,7 @@ def save_postcards_to_csv(postcards_details):
             writer = csv.DictWriter(file, fieldnames=headers)
             writer.writeheader()
             for postcard in postcards_details:
-                details = eval(postcard["details"])
+                details = json.loads(postcard["details"])
                 title = details.get("Title")
                 city = details.get("City", "")
                 cleaned_title = clean_title(title, city)
@@ -49,10 +66,12 @@ def save_postcards_to_csv(postcards_details):
                 })
         return tmp_file.name
 
+
 # Function to encode image to base64
 def encode_image(image_path):
     with open(image_path, "rb") as image_file:
         return base64.b64encode(image_file.read()).decode("utf-8")
+
 
 # Function to get postcard details using the API
 def get_postcard_details(api_key, front_image_path, back_image_path):
@@ -94,7 +113,7 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
         "Country": "USA",
         "City": "Yellowstone"
     }
-    
+
     Another Example:
     {
         "Title": "Antique Florida Postcard ST. PETERSBURG John's Pass Bridge Fishing 1957",
@@ -102,7 +121,7 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
         "Country": "USA",
         "City": "St. Petersburg"
     }
-    
+
     Another Example:
     {
         "Title": "Vintage Virginia Postcard NEWPORT NEWS Mariner's Museum Cover to Milwaukee 1999",
@@ -120,11 +139,11 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
     }
 
     If any of the information cannot be found on the postcard, please output just '' for that field.
-    
+
     Always try to put the year in if available. 
-    
+
     Never ever shorten a city name, ie never do New York -> NY. 
-    
+
     Always put the city in all caps in the title field, i.e. 'BOSTON' but never put it in all caps in the City Field.  
     Never put the attraction itself in all caps, ONLY the city. 
 
@@ -133,7 +152,7 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
     Never output the title of the post card directly, i.e. '"Greetings from Weslaco Texas Palm Trees Vintage Postcard"'
 
     Never output any commas within the title.
-    
+
     Try to max out the 80 character limit in the title field. 
 
     Make sure to carefully analyze the **text on the back** of the postcard as well, since it may contain valuable information like the city, region, or country.
@@ -166,16 +185,17 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
                 ]
             }
         ],
-        "max_tokens": 300
+        "max_tokens": 300,
         # "type": "json_object"
     }
 
     response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
     response_json = response.json()
-
+    print(response_json)
     details = response_json['choices'][0]['message']['content'] if 'choices' in response_json else "Details not available"
-    print(details)
+    # print(details)
     return details
+
 
 # Function for a worker to process its batch of images
 def process_batch(api_key, folder_path, image_files):
@@ -192,15 +212,23 @@ def process_batch(api_key, folder_path, image_files):
             })
     return postcards_details
 
+
 # Main function to distribute tasks to workers in parallel
-def process_postcards_in_folder(api_key, folder_path, workers=16):
+def process_postcards_in_folder(api_key, folder_path, workers=10):
     image_files = sorted([f for f in os.listdir(folder_path) if f.endswith((".jpg", ".jpeg", ".png"))])
     total_files = len(image_files)
-    batch_size = math.ceil(total_files / workers)
-    batches = [image_files[i * batch_size:(i + 1) * batch_size] for i in range(workers - 1)]
-    batches.append(image_files[(workers - 1) * batch_size:])
+
+    # Split image files into batches for each worker
+    batches = np.array_split(image_files, workers)
+
+    # Print the batches and the number of objects in each batch
+    print(f"Total number of image files: {total_files}")
+    for idx, batch in enumerate(batches):
+        print(f"Batch {idx + 1}: {len(batch)} files")
+
     postcards_details = []
     failed_batches = []  # To store failed batches for reprocessing
+
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {executor.submit(process_batch, api_key, folder_path, batch): i for i, batch in enumerate(batches)}
         for future in as_completed(futures):
@@ -234,8 +262,8 @@ def main():
     )
 
     st.title("🖼️Postcard Processor")
-    st.write("Upload a ZIP file containing pairs of postcard images (front and back) for processing. Please ensure that they are in sequential order, starting with a card front.")
-
+    st.write(
+        "Upload a ZIP file containing pairs of postcard images (front and back) for processing. Please ensure that they are in sequential order, starting with a card front.")
 
     api_key = os.getenv("OPENAI_API_KEY")
     zip_file = st.file_uploader("Upload ZIP file", type="zip")
@@ -248,8 +276,8 @@ def main():
                     zip_ref.extractall(tmp_dir)
 
                 with st.spinner("Processing images..."):
-                    # Process images using 16 workers
-                    postcards_details = process_postcards_in_folder(api_key, tmp_dir, workers=16)
+                    # Process images using 10 workers
+                    postcards_details = process_postcards_in_folder(api_key, tmp_dir, workers=10)
 
                     st.write("Processing complete!")
 
@@ -268,6 +296,6 @@ def main():
             mime="text/csv"
         )
 
+
 if __name__ == "__main__":
     main()
-
