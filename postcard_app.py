@@ -47,24 +47,35 @@ def clean_title(title, city):
 # Function to save postcards details to a CSV file
 def save_postcards_to_csv(postcards_details):
     headers = ["front_image", "back_image", "Title", "Region", "Country", "City"]
+    rows = []
+
+    # Collect all the rows in a list first
+    for postcard in postcards_details:
+        details = json.loads(postcard["details"])
+        title = details.get("Title")
+        city = details.get("City", "")
+        cleaned_title = clean_title(title, city)
+        row = {
+            "front_image": postcard["front_image"],
+            "back_image": postcard["back_image"],
+            "Title": cleaned_title,
+            "Region": details.get("Region"),
+            "Country": details.get("Country"),
+            "City": details.get("City")
+        }
+        rows.append(row)
+
+    # Sort the rows by the "front_image" in ascending alphabetical order
+    sorted_rows = sorted(rows, key=lambda x: x["front_image"])
+
+    # Write the sorted data to the CSV file
     with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp_file:
         with open(tmp_file.name, mode="w", newline="") as file:
             writer = csv.DictWriter(file, fieldnames=headers)
             writer.writeheader()
-            for postcard in postcards_details:
-                details = json.loads(postcard["details"])
-                title = details.get("Title")
-                city = details.get("City", "")
-                cleaned_title = clean_title(title, city)
-                writer.writerow({
-                    "front_image": postcard["front_image"],
-                    "back_image": postcard["back_image"],
-                    "Title": cleaned_title,
-                    "Region": details.get("Region"),
-                    "Country": details.get("Country"),
-                    "City": details.get("City")
-                })
-        return tmp_file.name
+            writer.writerows(sorted_rows)
+
+    return tmp_file.name
 
 
 # Function to encode image to base64
@@ -91,7 +102,7 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
 
     I need you to analyze both the front and back images and provide the following information:
 
-    1. **Title**: Create a descriptive title for the postcard based on the front and back. The title should be **80 characters or less**.
+    1. **Title**: Create a descriptive title for the postcard based on the front and back. The title should be **75 characters or less**.
     2. **Region**: Identify the U.S. state or region mentioned in the postcard.
     3. **Country**: Identify the country mentioned on the postcard.
     4. **City**: Identify the city or major landmark mentioned on the postcard.
@@ -124,7 +135,7 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
 
     Another Example:
     {
-        "Title": "Vintage Virginia Postcard NEWPORT NEWS Mariner's Museum Cover to Milwaukee 1999",
+        "Title": "Vintage Virginia Postcard NEWPORT NEWS Mariner's Museum Milwaukee 1999",
         "Region": "Virginia",
         "Country": "USA",
         "City": "Newport News"
@@ -132,7 +143,7 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
 
     Another Example:
     {
-        "Title": "Vintage Tennessee Postcard MEMPHIS Romeo & Juliet in Cotton Field Black 1938",
+        "Title": "Vintage Tennessee Postcard MEMPHIS Romeo & Juliet Cotton Field Black 1938",
         "Region": "Tennessee",
         "Country": "USA",
         "City": "Memphis"
@@ -153,7 +164,7 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
 
     Never output any commas within the title.
 
-    Try to max out the 80 character limit in the title field. 
+    Try to max out the 75 character limit in the title field. 
 
     Make sure to carefully analyze the **text on the back** of the postcard as well, since it may contain valuable information like the city, region, or country.
     """
