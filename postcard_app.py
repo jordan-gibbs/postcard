@@ -51,17 +51,21 @@ def save_postcards_to_csv(postcards_details):
 
     # Collect all the rows in a list first
     for postcard in postcards_details:
-        details = json.loads(postcard["details"])
-        title = details.get("Title")
+        try:
+            details = json.loads(postcard["details"])
+        except json.JSONDecodeError:
+            details = {}  # Handle JSON decoding errors gracefully
+
+        title = details.get("Title", "")
         city = details.get("City", "")
         cleaned_title = clean_title(title, city)
         row = {
             "front_image_link": postcard["front_image_link"],  # Use exact image link for front
-            "back_image_link": postcard["back_image_link"],    # Use exact image link for back
+            "back_image_link": postcard["back_image_link"],  # Use exact image link for back
             "Title": cleaned_title,
-            "Region": details.get("Region"),
-            "Country": details.get("Country"),
-            "City": details.get("City")
+            "Region": details.get("Region", ""),
+            "Country": details.get("Country", ""),
+            "City": details.get("City", "")
         }
         rows.append(row)
 
@@ -98,6 +102,8 @@ def download_images_from_links(links, tmp_dir):
             image_links.append(link)  # Save the exact link
         except Exception as e:
             print(f"Failed to download image from {link}: {e}")
+        print(image_files)
+        print(image_links)
     return image_files, image_links
 
 
@@ -141,6 +147,32 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
         "Country": "USA",
         "City": "Yellowstone"
     }
+    
+    Another Example:
+    {
+        "Title": "Antique Florida Postcard ST. PETERSBURG John's Pass Bridge Fishing 1957",
+        "Region": "Florida",
+        "Country": "USA",
+        "City": "St. Petersburg"
+    }
+    
+    Another Example:
+    {
+        "Title": "Vintage Virginia Postcard NEWPORT NEWS Mariner's Museum Cover to Milwaukee 1999",
+        "Title": "Vintage Virginia Postcard NEWPORT NEWS Mariner's Museum Milwaukee 1999",
+        "Region": "Virginia",
+        "Country": "USA",
+        "City": "Newport News"
+    }
+    
+    Another Example:
+    {
+        "Title": "Vintage Tennessee Postcard MEMPHIS Romeo & Juliet in Cotton Field Black 1938",
+        "Title": "Vintage Tennessee Postcard MEMPHIS Romeo & Juliet Cotton Field Black 1938",
+        "Region": "Tennessee",
+        "Country": "USA",
+        "City": "Memphis"
+    }
 
     If any of the information cannot be found on the postcard, please output just '' for that field.
 
@@ -152,6 +184,8 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
     Never put the attraction itself in all caps, ONLY the city. 
 
     Never output any commas within the title.
+    
+    Never output any sort of formatting block, i.e. ```json just output the raw string.
 
     Try to max out the 75 character limit in the title field. 
 
@@ -186,6 +220,7 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
             }
         ],
         "max_tokens": 300,
+        # "type": "json_object"
     }
 
     response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
@@ -197,34 +232,48 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
 # Function for a worker to process its batch of images
 def process_batch(api_key, folder_path, image_files, image_links):
     postcards_details = []
+    # Iterate over the images in pairs
     for i in range(0, len(image_files), 2):
-        if i + 1 < len(image_files):
+        if i + 1 < len(image_files) and i + 1 < len(image_links):  # Ensure there's a corresponding pair of links
             front_image_path = os.path.join(folder_path, image_files[i])
             back_image_path = os.path.join(folder_path, image_files[i + 1])
+
+            # Ensure the correct image links are used
+            front_image_link = image_links[i]  # Get the corresponding front image link
+            back_image_link = image_links[i + 1]  # Get the corresponding back image link
+
             postcard_details = get_postcard_details(api_key, front_image_path, back_image_path)
             postcards_details.append({
                 "front_image": image_files[i],
                 "back_image": image_files[i + 1],
-                "front_image_link": image_links[i],    # Store the front image link
-                "back_image_link": image_links[i + 1],  # Store the back image link
+                "front_image_link": front_image_link,  # Store the front image link
+                "back_image_link": back_image_link,  # Store the back image link
                 "details": postcard_details
             })
+            print(postcards_details)  # Optional: for debugging
     return postcards_details
 
 
 # Main function to distribute tasks to workers in parallel
 def process_postcards_in_folder(api_key, folder_path, image_links, workers=10):
+    # List and sort all image files in the folder
     image_files = sorted([f for f in os.listdir(folder_path) if f.endswith((".jpg", ".jpeg", ".png"))])
+
     total_files = len(image_files)
 
-    # Split image files into batches for each worker
-    batches = np.array_split(image_files, workers)
+    # Split image files and image links into batches for each worker
+    batches_files = np.array_split(image_files, workers)
+    batches_links = np.array_split(image_links, workers)  # Split image_links to match the batches of image_files
 
     postcards_details = []
     failed_batches = []  # To store failed batches for reprocessing
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = {executor.submit(process_batch, api_key, folder_path, batch, image_links): i for i, batch in enumerate(batches)}
+        # Submit batches of image files and corresponding image links to the process_batch function
+        futures = {
+            executor.submit(process_batch, api_key, folder_path, batch_files, batch_links): i
+            for i, (batch_files, batch_links) in enumerate(zip(batches_files, batches_links))
+        }
         for future in as_completed(futures):
             worker_id = futures[future]
             try:
@@ -234,18 +283,18 @@ def process_postcards_in_folder(api_key, folder_path, image_links, workers=10):
                 print(f"Worker {worker_id + 1} generated an exception: {exc}")
                 failed_batches.append(worker_id)  # Keep track of failed batches
 
-    # Re-run the failed batches
+    # Re-run the failed batches if any
     if failed_batches:
         for worker_id in failed_batches:
-            batch = batches[worker_id]
+            batch_files = batches_files[worker_id]
+            batch_links = batches_links[worker_id]
             try:
-                result = process_batch(api_key, folder_path, batch, image_links)
+                result = process_batch(api_key, folder_path, batch_files, batch_links)
                 postcards_details.extend(result)
             except Exception as exc:
                 print(f"Worker {worker_id + 1} failed again: {exc}")
 
     return postcards_details
-
 
 def main():
     st.set_page_config(
@@ -255,22 +304,23 @@ def main():
     )
 
     st.title("🖼️Postcard Processor")
-    st.write(
-        "Upload a ZIP file containing pairs of postcard images (front and back) for processing. Please ensure that they are in sequential order, starting with a card front.")
+    st.write("Upload a set of postcard image links (front and back) for processing.")
 
     api_key = os.getenv("OPENAI_API_KEY")
     links_input = st.text_area("Paste image URLs (one per line)")
-    links = links_input.splitlines() if links_input else []
+    links = [link for link in links_input.splitlines() if link.strip()] if links_input else []
 
     if api_key and links:
         if "csv_data" not in st.session_state:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 # Download and save images from the links
-                image_files, image_links = download_images_from_links(links, tmp_dir)
+                with st.spinner("Getting image files..."):
+                    image_files, image_links = download_images_from_links(links, tmp_dir)
 
                 with st.spinner("Processing images..."):
                     # Process images using 10 workers
                     postcards_details = process_postcards_in_folder(api_key, tmp_dir, image_links, workers=10)
+                    print(postcards_details)
 
                     st.write("Processing complete!")
 
