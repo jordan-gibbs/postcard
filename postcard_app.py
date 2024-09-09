@@ -84,6 +84,22 @@ def encode_image(image_path):
         return base64.b64encode(image_file.read()).decode("utf-8")
 
 
+def download_images_from_links(links, tmp_dir):
+    image_files = []
+    for idx, link in enumerate(links):
+        try:
+            response = requests.get(link)
+            response.raise_for_status()
+            image_path = os.path.join(tmp_dir, f"image_{idx}.jpg")
+            with open(image_path, "wb") as f:
+                f.write(response.content)
+            image_files.append(f"image_{idx}.jpg")
+        except Exception as e:
+            print(f"Failed to download image from {link}: {e}")
+    return image_files
+
+
+
 # Function to get postcard details using the API
 def get_postcard_details(api_key, front_image_path, back_image_path):
     front_image_base64 = encode_image(front_image_path)
@@ -277,14 +293,14 @@ def main():
         "Upload a ZIP file containing pairs of postcard images (front and back) for processing. Please ensure that they are in sequential order, starting with a card front.")
 
     api_key = os.getenv("OPENAI_API_KEY")
-    zip_file = st.file_uploader("Upload ZIP file", type="zip")
+    links_input = st.text_area("Paste image URLs (one per line)")
+    links = links_input.splitlines() if links_input else []
 
-    if api_key and zip_file:
+    if api_key and links:
         if "csv_data" not in st.session_state:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                # Extract zip file
-                with zipfile.ZipFile(zip_file, "r") as zip_ref:
-                    zip_ref.extractall(tmp_dir)
+                # Download and save images from the links
+                image_files = download_images_from_links(links, tmp_dir)
 
                 with st.spinner("Processing images..."):
                     # Process images using 10 workers
