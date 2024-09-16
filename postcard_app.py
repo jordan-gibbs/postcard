@@ -226,7 +226,7 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
     """
 
     payload = {
-        "model": "gpt-4o",
+        "model": "gpt-4o-mini",
         "messages": [
             {
                 "role": "user",
