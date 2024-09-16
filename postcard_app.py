@@ -12,7 +12,6 @@ import json
 import numpy as np
 
 
-# Function to clean and process the title based on the city name
 def clean_title(title, city):
     # Handle empty title or city cases
     if not title:
@@ -41,8 +40,44 @@ def clean_title(title, city):
         if city_pattern.search(title):
             title = city_pattern.sub(city.upper(), title)  # Replace city name with uppercase
 
-    return title
+    # Now let's handle ensuring the string length doesn't exceed 80 characters
 
+    # Find the 4-digit year or a year with 's' (like 1950s)
+    year_pattern = re.compile(r'(\b\d{4}s?\b)')
+    year_match = year_pattern.search(title)
+
+    year = ''
+    year_position = -1
+    if year_match:
+        year = year_match.group(0)  # Extract the year or decade (e.g., 1999 or 1950s)
+        year_position = year_match.start()  # Get the position of the year in the string
+
+    # If year is found, split the title into parts: before and after the year
+    if year:
+        before_year = title[:year_position].strip()  # Title before the year
+        after_year = title[year_position + len(year):].strip()  # Title after the year (if any)
+        title_without_year = before_year + " " + after_year  # Combine both parts without year
+    else:
+        title_without_year = title  # If no year is found, treat the whole title normally
+
+    # Check if the title length (including year) exceeds 80 characters
+    full_title_length = len(title_without_year.strip()) + len(year.strip()) + 1  # +1 for the space before the year
+    words = title_without_year.split()
+
+    while full_title_length > 80 and words:
+        # Remove a word from the beginning until we are under 80 characters
+        words.pop(0)
+        title_without_year = ' '.join(words)
+        full_title_length = len(title_without_year.strip()) + len(year.strip()) + 1
+
+    # Reconstruct the title by placing the year back in its original position
+    if year:
+        final_title = title_without_year[:year_position].strip() + " " + year + " " + title_without_year[year_position:].strip()
+        final_title = final_title.strip()
+    else:
+        final_title = title_without_year.strip()
+
+    return final_title
 
 # Function to save postcards details to a CSV file
 def save_postcards_to_csv(postcards_details):
@@ -125,7 +160,7 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
 
     I need you to analyze both the front and back images and provide the following information:
 
-    1. **Title**: Create a descriptive title for the postcard based on the front and back. The title should be **75 characters or less**.
+    1. **Title**: Create a descriptive title for the postcard based on the front and back. The title should be **90 characters or less**.
     2. **Region**: Identify the U.S. state or region mentioned in the postcard.
     3. **Country**: Identify the country mentioned on the postcard.
     4. **City**: Identify the city or major landmark mentioned on the postcard.
@@ -147,7 +182,7 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
         "Country": "USA",
         "City": "Yellowstone"
     }
-    
+
     Another Example:
     {
         "Title": "Antique Florida Postcard ST. PETERSBURG John's Pass Bridge Fishing 1957",
@@ -155,20 +190,18 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
         "Country": "USA",
         "City": "St. Petersburg"
     }
-    
+
     Another Example:
     {
-        "Title": "Vintage Virginia Postcard NEWPORT NEWS Mariner's Museum Cover to Milwaukee 1999",
-        "Title": "Vintage Virginia Postcard NEWPORT NEWS Mariner's Museum Milwaukee 1999",
+        "Title": "Vintage Virginia Postcard NEWPORT NEWS Mariner's Museum Cover to Milwaukee Post 1999",
         "Region": "Virginia",
         "Country": "USA",
         "City": "Newport News"
     }
-    
+
     Another Example:
     {
         "Title": "Vintage Tennessee Postcard MEMPHIS Romeo & Juliet in Cotton Field Black 1938",
-        "Title": "Vintage Tennessee Postcard MEMPHIS Romeo & Juliet Cotton Field Black 1938",
         "Region": "Tennessee",
         "Country": "USA",
         "City": "Memphis"
@@ -184,10 +217,10 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
     Never put the attraction itself in all caps, ONLY the city. 
 
     Never output any commas within the title.
-    
+
     Never output any sort of formatting block, i.e. ```json just output the raw string.
 
-    Try to max out the 75 character limit in the title field. 
+    Try to max out the 90 character limit in the title field, keyword stuff if you must. 
 
     Make sure to carefully analyze the **text on the back** of the postcard as well, since it may contain valuable information like the city, region, or country.
     """
@@ -225,7 +258,8 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
 
     response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
     response_json = response.json()
-    details = response_json['choices'][0]['message']['content'] if 'choices' in response_json else "Details not available"
+    details = response_json['choices'][0]['message'][
+        'content'] if 'choices' in response_json else "Details not available"
     return details
 
 
@@ -295,6 +329,7 @@ def process_postcards_in_folder(api_key, folder_path, image_links, workers=10):
                 print(f"Worker {worker_id + 1} failed again: {exc}")
 
     return postcards_details
+
 
 def main():
     st.set_page_config(
