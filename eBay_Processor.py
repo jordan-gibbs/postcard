@@ -417,7 +417,7 @@ def main():
     links = [link for link in links_input.splitlines() if link.strip()] if links_input else []
 
     if links:
-        if "csv_data" not in st.session_state:
+        if "csv_data1" not in st.session_state:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 # Download and save images from the links
                 with st.spinner("Getting image files..."):
