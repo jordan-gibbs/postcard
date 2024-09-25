@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import re
 import json
 import numpy as np
+from openai import OpenAI
 
 
 def clean_title(title, city):
@@ -18,11 +19,9 @@ def clean_title(title, city):
 
 
 def save_postcards_to_csv(postcards_details):
-    # Updated headers to include the new structure
     headers = ["front_image_link", "back_image_link", "Title", "Date", "Region", "State", "Country", "City", "Destination City", "Recipient", "Year", "Description"]
     rows = []
 
-    # Collect all the rows in a list first
     for postcard in postcards_details:
         try:
             details = json.loads(postcard["details"])
@@ -33,7 +32,6 @@ def save_postcards_to_csv(postcards_details):
         city = details.get("City", "")
         cleaned_title = clean_title(title, city)
 
-        # Create a row with all the fields, including the new ones
         row = {
             "front_image_link": postcard.get("front_image_link", ""),
             "back_image_link": postcard.get("back_image_link", ""),
@@ -49,29 +47,15 @@ def save_postcards_to_csv(postcards_details):
         }
         rows.append(row)
 
-    # Sort the rows by the "front_image_link" in ascending alphabetical order (for sequential order)
-    sorted_rows = sorted(rows, key=lambda x: x["front_image_link"])
-
-    # Write the sorted data to the CSV file
+    # No need to sort since they are already in order
     with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp_file:
         with open(tmp_file.name, mode="w", newline="", encoding="utf-8") as file:
             writer = csv.DictWriter(file, fieldnames=headers)
             writer.writeheader()
-            writer.writerows(sorted_rows)
+            writer.writerows(rows)
 
     return tmp_file.name
 
-    # Sort the rows by the "front_image_link" in ascending alphabetical order (for sequential order)
-    sorted_rows = sorted(rows, key=lambda x: x["front_image_link"])
-
-    # Write the sorted data to the CSV file
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp_file:
-        with open(tmp_file.name, mode="w", newline="") as file:
-            writer = csv.DictWriter(file, fieldnames=headers)
-            writer.writeheader()
-            writer.writerows(sorted_rows)
-
-    return tmp_file.name
 
 
 # Function to encode image to base64
@@ -81,22 +65,47 @@ def encode_image(image_path):
 
 
 def download_images_from_links(links, tmp_dir):
-    image_files = []
-    image_links = []
-    for idx, link in enumerate(links):
+    postcards = []
+    # Ensure we process links in pairs
+    for idx in range(0, len(links), 2):
         try:
-            response = requests.get(link)
-            response.raise_for_status()
-            image_path = os.path.join(tmp_dir, f"image_{idx}.jpg")
-            with open(image_path, "wb") as f:
-                f.write(response.content)
-            image_files.append(f"image_{idx}.jpg")
-            image_links.append(link)  # Save the exact link
+            # Download front image
+            front_link = links[idx]
+            front_response = requests.get(front_link)
+            front_response.raise_for_status()
+            front_image_filename = f"image_{idx}.jpg"
+            front_image_path = os.path.join(tmp_dir, front_image_filename)
+            with open(front_image_path, "wb") as f:
+                f.write(front_response.content)
+
+            # Download back image
+            back_link = links[idx + 1] if idx + 1 < len(links) else None
+            if back_link:
+                back_response = requests.get(back_link)
+                back_response.raise_for_status()
+                back_image_filename = f"image_{idx + 1}.jpg"
+                back_image_path = os.path.join(tmp_dir, back_image_filename)
+                with open(back_image_path, "wb") as f:
+                    f.write(back_response.content)
+            else:
+                back_image_filename = None
+                back_image_path = None
+
+            postcards.append({
+                "original_index": idx // 2,
+                "front_image_filename": front_image_filename,
+                "back_image_filename": back_image_filename,
+                "front_image_path": front_image_path,
+                "back_image_path": back_image_path,
+                "front_link": front_link,
+                "back_link": back_link
+            })
+
         except Exception as e:
-            print(f"Failed to download image from {link}: {e}")
-        print(image_files)
-        print(image_links)
-    return image_files, image_links
+            print(f"Failed to download images at index {idx}: {e}")
+
+    return postcards
+
 
 
 # Function to get postcard details using the API
@@ -158,8 +167,7 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
         "Description": "This vintage postcard, postmarked July 3, 1908, showcases a bustling view of Main Street looking from the Capitol in Columbia, South Carolina. The image captures a moment in time with early 20th-century architecture lining the street, pedestrians visible on the sidewalks, and a clear view down the busy thoroughfare. Sent to DA Smith in Walhalla, South Carolina, the postcard features a green one-cent stamp and is a charming artifact from the period, providing a glimpse into the everyday life and urban landscape of Columbia at the time."
     }
     
-    If any of the information cannot be found on the postcard, please output just "" for that field. Never fake 
-    anything or try to guess. 
+    If any of the information cannot be found on the postcard, please output just "" for that field. You can infer or guess if you feel you have enough information. 
 
     Always try to put the year in if available. 
 
@@ -210,72 +218,170 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
     return details
 
 
-# Function for a worker to process its batch of images
-def process_batch(api_key, folder_path, image_files, image_links):
+def process_batch(api_key, batch):
     postcards_details = []
-    # Iterate over the images in pairs
-    for i in range(0, len(image_files), 2):
-        if i + 1 < len(image_files) and i + 1 < len(image_links):  # Ensure there's a corresponding pair of links
-            front_image_path = os.path.join(folder_path, image_files[i])
-            back_image_path = os.path.join(folder_path, image_files[i + 1])
+    for postcard in batch:
+        front_image_path = postcard["front_image_path"]
+        back_image_path = postcard["back_image_path"]
+        front_image_link = postcard["front_link"]
+        back_image_link = postcard["back_link"]
+        original_index = postcard["original_index"]
 
-            # Ensure the correct image links are used
-            front_image_link = image_links[i]  # Get the corresponding front image link
-            back_image_link = image_links[i + 1]  # Get the corresponding back image link
-
-            postcard_details = get_postcard_details(api_key, front_image_path, back_image_path)
-            postcards_details.append({
-                "front_image": image_files[i],
-                "back_image": image_files[i + 1],
-                "front_image_link": front_image_link,  # Store the front image link
-                "back_image_link": back_image_link,  # Store the back image link
-                "details": postcard_details
-            })
-            print(postcards_details)  # Optional: for debugging
+        postcard_details = get_postcard_details(api_key, front_image_path, back_image_path)
+        postcards_details.append({
+            "original_index": original_index,
+            "front_image": postcard["front_image_filename"],
+            "back_image": postcard["back_image_filename"],
+            "front_image_link": front_image_link,
+            "back_image_link": back_image_link,
+            "details": postcard_details
+        })
     return postcards_details
 
 
-# Main function to distribute tasks to workers in parallel
-def process_postcards_in_folder(api_key, folder_path, image_links, workers=10):
-    # List and sort all image files in the folder
-    image_files = sorted([f for f in os.listdir(folder_path) if f.endswith((".jpg", ".jpeg", ".png"))])
+def process_postcards_in_folder(api_key, postcards, workers=10):
+    total_postcards = len(postcards)
+    if total_postcards == 0:
+        raise ValueError("No postcards to process.")
 
-    total_files = len(image_files)
-
-    # Split image files and image links into batches for each worker
-    batches_files = np.array_split(image_files, workers)
-    batches_links = np.array_split(image_links, workers)  # Split image_links to match the batches of image_files
+    # Split postcards into batches
+    batch_size = max(1, total_postcards // workers)
+    batches = [postcards[i:i + batch_size] for i in range(0, total_postcards, batch_size)]
 
     postcards_details = []
-    failed_batches = []  # To store failed batches for reprocessing
+    failed_batches = []
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
-        # Submit batches of image files and corresponding image links to the process_batch function
         futures = {
-            executor.submit(process_batch, api_key, folder_path, batch_files, batch_links): i
-            for i, (batch_files, batch_links) in enumerate(zip(batches_files, batches_links))
+            executor.submit(process_batch, api_key, batch): idx
+            for idx, batch in enumerate(batches)
         }
         for future in as_completed(futures):
-            worker_id = futures[future]
+            batch_idx = futures[future]
             try:
                 result = future.result()
                 postcards_details.extend(result)
             except Exception as exc:
-                print(f"Worker {worker_id + 1} generated an exception: {exc}")
-                failed_batches.append(worker_id)  # Keep track of failed batches
+                print(f"Batch {batch_idx} generated an exception: {exc}")
+                failed_batches.append(batch_idx)
 
-    # Re-run the failed batches if any
-    if failed_batches:
-        for worker_id in failed_batches:
-            batch_files = batches_files[worker_id]
-            batch_links = batches_links[worker_id]
-            try:
-                result = process_batch(api_key, folder_path, batch_files, batch_links)
-                postcards_details.extend(result)
-            except Exception as exc:
-                print(f"Worker {worker_id + 1} failed again: {exc}")
+    # Re-run failed batches if any
+    for batch_idx in failed_batches:
+        batch = batches[batch_idx]
+        try:
+            result = process_batch(api_key, batch)
+            postcards_details.extend(result)
+        except Exception as exc:
+            print(f"Batch {batch_idx} failed again: {exc}")
+
+    # Sort postcards by original index
+    postcards_details = sorted(postcards_details, key=lambda x: x["original_index"])
 
     return postcards_details
+
+
+
+# Function to analyze a row using the AI model
+def analyze_row_with_ai(row, headers):
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    # Convert the row into a string excluding 'keywords' since it doesn't exist yet
+    row_string = ", ".join([f"{header}: {row[header]}" for header in headers if header != "keywords" or
+                            "front_image_link" or "back_image_link"])
+    print(row_string)
+
+    with open("keywords.csv", "r", errors="ignore") as keywords:
+        keyword_list = keywords.read()
+
+    prompt = f"""
+        You are a keyword analyzer. Youi will examine a description of a postcard, and then using the list of keywords 
+        given to you, you will choose the top 3-7 most relevant from the list and output them, comma separated like this: 
+        Example 1:
+        New York, Volcano, Tree, Yellow 
+
+        Example 2: 
+        Summer, Southwest, Social History, Embossed
+
+        You will never output anything else. 
+        
+        Here are the list of keywords you can choose from. You will never output any other keyword.
+        {keyword_list} 
+        """
+
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": f"Here is the row you'll be analyzing:\n{row_string}"},
+        ]
+    )
+
+    keywords = response.choices[0].message.content
+
+    return keywords
+
+
+def process_row_batch(rows, headers):
+    processed_rows = []
+    for row in rows:
+        try:
+            # Analyze the row using AI to get keywords
+            keywords = analyze_row_with_ai(row, headers)
+            # Add the keywords to the row
+            row["keywords"] = keywords
+        except Exception as e:
+            print(f"Error processing row {row.get('original_index', '')}: {e}")
+            row["keywords"] = ""  # Optionally, set to empty string or handle accordingly
+        processed_rows.append(row)
+    return processed_rows
+
+
+
+def process_csv_with_keywords(input_csv, output_csv, workers=10):
+    # Read the input CSV
+    with open(input_csv, mode="r", newline="", encoding="utf-8") as infile:
+        reader = csv.DictReader(infile)
+        headers = reader.fieldnames  # Read existing headers
+
+        if "keywords" not in headers:
+            headers.append("keywords")  # Add 'keywords' column only when writing the output
+
+        # Add original index to each row to track its position
+        rows = [{**row, "original_index": idx} for idx, row in enumerate(reader)]
+
+    # Split rows into batches for each worker
+    batch_size = max(1, len(rows) // workers)
+    row_batches = [rows[i:i + batch_size] for i in range(0, len(rows), batch_size)]
+
+    # Use ThreadPoolExecutor for parallel processing
+    processed_rows = []
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {executor.submit(process_row_batch, batch, headers): idx for idx, batch in enumerate(row_batches)}
+
+        # Collect results as they complete
+        for future in as_completed(futures):
+            batch_idx = futures[future]
+            try:
+                batch_result = future.result()
+                processed_rows.extend(batch_result)
+            except Exception as exc:
+                print(f"An error occurred during processing batch {batch_idx}: {exc}")
+
+    # Sort processed rows by the original index to maintain order
+    processed_rows = sorted(processed_rows, key=lambda x: x["original_index"])
+
+    # Remove the 'original_index' from the rows before writing to CSV
+    for row in processed_rows:
+        row.pop("original_index", None)
+
+    # Write the updated rows with keywords to a new CSV
+    with open(output_csv, mode="w", newline="", encoding="utf-8") as outfile:
+        writer = csv.DictWriter(outfile, fieldnames=headers)
+        writer.writeheader()
+        writer.writerows(processed_rows)
+
+    print(f"Updated CSV with keywords saved to {output_csv}")
+
+
 
 
 def main():
@@ -297,21 +403,23 @@ def main():
             with tempfile.TemporaryDirectory() as tmp_dir:
                 # Download and save images from the links
                 with st.spinner("Getting image files..."):
-                    image_files, image_links = download_images_from_links(links, tmp_dir)
+                    postcards = download_images_from_links(links, tmp_dir)
 
                 with st.spinner("Processing images..."):
-                    # Process images using 10 workers
-                    postcards_details = process_postcards_in_folder(api_key, tmp_dir, image_links, workers=10)
-                    print(postcards_details)
-
-                    st.write("Processing complete!")
+                    # Process postcards using workers
+                    postcards_details = process_postcards_in_folder(api_key, postcards, workers=10)
 
                     # Save the results to a CSV file
                     csv_file = save_postcards_to_csv(postcards_details)
 
+                with st.spinner("Adding keywords..."):
+                    process_csv_with_keywords(csv_file, csv_file)
+                    st.write("Processing complete!")
+
                     # Read the CSV file and store data in session state
                     with open(csv_file, "rb") as f:
                         st.session_state.csv_data = f.read()
+
 
         # Create the download button, using stored CSV data
         st.download_button(

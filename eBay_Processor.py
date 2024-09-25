@@ -79,12 +79,10 @@ def clean_title(title, city):
 
     return final_title
 
-# Function to save postcards details to a CSV file
 def save_postcards_to_csv(postcards_details):
     headers = ["front_image_link", "back_image_link", "Title", "Region", "Country", "City"]
     rows = []
 
-    # Collect all the rows in a list first
     for postcard in postcards_details:
         try:
             details = json.loads(postcard["details"])
@@ -95,8 +93,9 @@ def save_postcards_to_csv(postcards_details):
         city = details.get("City", "")
         cleaned_title = clean_title(title, city)
         row = {
-            "front_image_link": postcard["front_image_link"],  # Use exact image link for front
-            "back_image_link": postcard["back_image_link"],  # Use exact image link for back
+            "original_index": postcard["original_index"],  # Include original index
+            "front_image_link": postcard["front_image_link"],
+            "back_image_link": postcard["back_image_link"],
             "Title": cleaned_title,
             "Region": details.get("Region", ""),
             "Country": details.get("Country", ""),
@@ -104,17 +103,22 @@ def save_postcards_to_csv(postcards_details):
         }
         rows.append(row)
 
-    # Sort the rows by the "front_image_link" in ascending alphabetical order (for sequential order)
-    sorted_rows = sorted(rows, key=lambda x: x["front_image_link"])
+    # Sort rows by the original index
+    sorted_rows = sorted(rows, key=lambda x: x["original_index"])
+
+    # Remove 'original_index' before writing to CSV
+    for row in sorted_rows:
+        row.pop("original_index", None)
 
     # Write the sorted data to the CSV file
     with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp_file:
-        with open(tmp_file.name, mode="w", newline="") as file:
+        with open(tmp_file.name, mode="w", newline="", encoding="utf-8") as file:
             writer = csv.DictWriter(file, fieldnames=headers)
             writer.writeheader()
             writer.writerows(sorted_rows)
 
     return tmp_file.name
+
 
 
 # Function to encode image to base64
@@ -124,22 +128,46 @@ def encode_image(image_path):
 
 
 def download_images_from_links(links, tmp_dir):
-    image_files = []
-    image_links = []
-    for idx, link in enumerate(links):
+    postcards = []
+    # Process links in pairs (front and back)
+    for idx in range(0, len(links), 2):
         try:
-            response = requests.get(link)
-            response.raise_for_status()
-            image_path = os.path.join(tmp_dir, f"image_{idx}.jpg")
-            with open(image_path, "wb") as f:
-                f.write(response.content)
-            image_files.append(f"image_{idx}.jpg")
-            image_links.append(link)  # Save the exact link
+            # Download front image
+            front_link = links[idx]
+            front_response = requests.get(front_link)
+            front_response.raise_for_status()
+            front_image_filename = f"image_{idx:03d}.jpg"
+            front_image_path = os.path.join(tmp_dir, front_image_filename)
+            with open(front_image_path, "wb") as f:
+                f.write(front_response.content)
+
+            # Download back image if available
+            if idx + 1 < len(links):
+                back_link = links[idx + 1]
+                back_response = requests.get(back_link)
+                back_response.raise_for_status()
+                back_image_filename = f"image_{idx + 1:03d}.jpg"
+                back_image_path = os.path.join(tmp_dir, back_image_filename)
+                with open(back_image_path, "wb") as f:
+                    f.write(back_response.content)
+            else:
+                back_link = None
+                back_image_filename = None
+                back_image_path = None
+
+            postcards.append({
+                "original_index": idx // 2,
+                "front_image_filename": front_image_filename,
+                "back_image_filename": back_image_filename,
+                "front_image_path": front_image_path,
+                "back_image_path": back_image_path,
+                "front_image_link": front_link,
+                "back_image_link": back_link
+            })
         except Exception as e:
-            print(f"Failed to download image from {link}: {e}")
-        print(image_files)
-        print(image_links)
-    return image_files, image_links
+            print(f"Failed to download images at index {idx}: {e}")
+    return postcards
+
 
 
 # Function to get postcard details using the API
@@ -263,72 +291,74 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
     return details
 
 
-# Function for a worker to process its batch of images
-def process_batch(api_key, folder_path, image_files, image_links):
+def process_batch(api_key, batch):
     postcards_details = []
-    # Iterate over the images in pairs
-    for i in range(0, len(image_files), 2):
-        if i + 1 < len(image_files) and i + 1 < len(image_links):  # Ensure there's a corresponding pair of links
-            front_image_path = os.path.join(folder_path, image_files[i])
-            back_image_path = os.path.join(folder_path, image_files[i + 1])
+    for postcard in batch:
+        front_image_path = postcard["front_image_path"]
+        back_image_path = postcard["back_image_path"]
+        front_image_link = postcard["front_image_link"]
+        back_image_link = postcard["back_image_link"]
+        original_index = postcard["original_index"]
 
-            # Ensure the correct image links are used
-            front_image_link = image_links[i]  # Get the corresponding front image link
-            back_image_link = image_links[i + 1]  # Get the corresponding back image link
-
-            postcard_details = get_postcard_details(api_key, front_image_path, back_image_path)
-            postcards_details.append({
-                "front_image": image_files[i],
-                "back_image": image_files[i + 1],
-                "front_image_link": front_image_link,  # Store the front image link
-                "back_image_link": back_image_link,  # Store the back image link
-                "details": postcard_details
-            })
-            print(postcards_details)  # Optional: for debugging
+        postcard_details = get_postcard_details(api_key, front_image_path, back_image_path)
+        postcards_details.append({
+            "original_index": original_index,
+            "front_image": postcard["front_image_filename"],
+            "back_image": postcard["back_image_filename"],
+            "front_image_link": front_image_link,
+            "back_image_link": back_image_link,
+            "details": postcard_details
+        })
     return postcards_details
 
 
-# Main function to distribute tasks to workers in parallel
-def process_postcards_in_folder(api_key, folder_path, image_links, workers=10):
-    # List and sort all image files in the folder
-    image_files = sorted([f for f in os.listdir(folder_path) if f.endswith((".jpg", ".jpeg", ".png"))])
 
-    total_files = len(image_files)
+def get_image_index(filename):
+    m = re.search(r'image_(\d+)\.jpg', filename)
+    return int(m.group(1)) if m else -1
 
-    # Split image files and image links into batches for each worker
-    batches_files = np.array_split(image_files, workers)
-    batches_links = np.array_split(image_links, workers)  # Split image_links to match the batches of image_files
+
+def process_postcards_in_folder(api_key, postcards, workers=10):
+    total_postcards = len(postcards)
+    if total_postcards == 0:
+        raise ValueError("No postcards to process.")
+
+    # Split postcards into batches
+    batch_size = max(1, total_postcards // workers)
+    postcard_batches = [postcards[i:i + batch_size] for i in range(0, total_postcards, batch_size)]
 
     postcards_details = []
-    failed_batches = []  # To store failed batches for reprocessing
+    failed_batches = []
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
-        # Submit batches of image files and corresponding image links to the process_batch function
         futures = {
-            executor.submit(process_batch, api_key, folder_path, batch_files, batch_links): i
-            for i, (batch_files, batch_links) in enumerate(zip(batches_files, batches_links))
+            executor.submit(process_batch, api_key, batch): idx
+            for idx, batch in enumerate(postcard_batches)
         }
         for future in as_completed(futures):
-            worker_id = futures[future]
+            batch_idx = futures[future]
             try:
                 result = future.result()
                 postcards_details.extend(result)
             except Exception as exc:
-                print(f"Worker {worker_id + 1} generated an exception: {exc}")
-                failed_batches.append(worker_id)  # Keep track of failed batches
+                print(f"Batch {batch_idx} generated an exception: {exc}")
+                failed_batches.append(batch_idx)
 
-    # Re-run the failed batches if any
+    # Re-run failed batches if any
     if failed_batches:
-        for worker_id in failed_batches:
-            batch_files = batches_files[worker_id]
-            batch_links = batches_links[worker_id]
+        for batch_idx in failed_batches:
+            batch = postcard_batches[batch_idx]
             try:
-                result = process_batch(api_key, folder_path, batch_files, batch_links)
+                result = process_batch(api_key, batch)
                 postcards_details.extend(result)
             except Exception as exc:
-                print(f"Worker {worker_id + 1} failed again: {exc}")
+                print(f"Batch {batch_idx} failed again: {exc}")
+
+    # Sort postcards by original index
+    postcards_details = sorted(postcards_details, key=lambda x: x["original_index"])
 
     return postcards_details
+
 
 
 def main():
@@ -345,18 +375,16 @@ def main():
     links_input = st.text_area("Paste image URLs (one per line)")
     links = [link for link in links_input.splitlines() if link.strip()] if links_input else []
 
-    if api_key and links:
+    if links:
         if "csv_data" not in st.session_state:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 # Download and save images from the links
                 with st.spinner("Getting image files..."):
-                    image_files, image_links = download_images_from_links(links, tmp_dir)
+                    postcards = download_images_from_links(links, tmp_dir)
 
                 with st.spinner("Processing images..."):
-                    # Process images using 10 workers
-                    postcards_details = process_postcards_in_folder(api_key, tmp_dir, image_links, workers=10)
-                    print(postcards_details)
-
+                    # Process postcards using workers
+                    postcards_details = process_postcards_in_folder(api_key, postcards, workers=10)
                     st.write("Processing complete!")
 
                     # Save the results to a CSV file
@@ -364,12 +392,12 @@ def main():
 
                     # Read the CSV file and store data in session state
                     with open(csv_file, "rb") as f:
-                        st.session_state.csv_data = f.read()
+                        st.session_state.csv_data1 = f.read()
 
         # Create the download button, using stored CSV data
         st.download_button(
             label="Download CSV",
-            data=st.session_state.csv_data,
+            data=st.session_state.csv_data1,
             file_name="postcards.csv",
             mime="text/csv"
         )
