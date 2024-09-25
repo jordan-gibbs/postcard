@@ -57,6 +57,46 @@ def save_postcards_to_csv(postcards_details):
     return tmp_file.name
 
 
+def save_postcards_to_final_csv(postcards_details):
+    headers = ["front_image_link", "back_image_link", "Title", "Date", "Region", "State", "Country", "City",
+               "Destination City", "Recipient", "Year", "Description", "Keywords"]
+    rows = []
+
+    for postcard in postcards_details:
+        try:
+            details = json.loads(postcard["details"])
+        except json.JSONDecodeError:
+            details = {}  # Handle JSON decoding errors gracefully
+
+        title = details.get("Title", "")
+        city = details.get("City", "")
+        cleaned_title = clean_title(title, city)
+
+        row = {
+            "front_image_link": postcard.get("front_image_link", ""),
+            "back_image_link": postcard.get("back_image_link", ""),
+            "Title": cleaned_title,
+            "Date": details.get("Date", ""),
+            "State": details.get("State", ""),
+            "Country": details.get("Country", ""),
+            "City": details.get("City", ""),
+            "Destination City": details.get("Destination City", ""),
+            "Recipient": details.get("Recipient", ""),
+            "Year": details.get("Year", ""),
+            "Description": details.get("Description", ""),
+            "Keywords": details.get("Keywords", ""),
+        }
+        rows.append(row)
+
+    # No need to sort since they are already in order
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp_file:
+        with open(tmp_file.name, mode="w", newline="", encoding="utf-8") as file:
+            writer = csv.DictWriter(file, fieldnames=headers)
+            writer.writeheader()
+            writer.writerows(rows)
+
+    return tmp_file.name
+
 
 # Function to encode image to base64
 def encode_image(image_path):
@@ -296,14 +336,15 @@ def analyze_row_with_ai(row, headers):
         You are a keyword analyzer. Youi will examine a description of a postcard, and then using the list of keywords 
         given to you, you will choose the top 3-7 most relevant from the list and output them, comma separated like this: 
         Example 1:
-        New York, Volcano, Tree, Yellow 
+        Volcano, Tree, Yellow 
 
         Example 2: 
         Summer, Southwest, Social History, Embossed
 
         You will never output anything else. 
         
-        Here are the list of keywords you can choose from. You will never output any other keyword.
+        Here are the list of keywords you can choose from. You will never output any other keyword. Never put the 
+        place name in the keywords unless it exists from the keywords below:
         {keyword_list} 
         """
 

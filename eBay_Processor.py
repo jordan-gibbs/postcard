@@ -120,6 +120,47 @@ def save_postcards_to_csv(postcards_details):
     return tmp_file.name
 
 
+def save_postcards_to_final_csv(postcards_details):
+    headers = ["front_image_link", "back_image_link", "Title", "Region", "Country", "City"]
+    rows = []
+
+    for postcard in postcards_details:
+        try:
+            details = json.loads(postcard["details"])
+        except json.JSONDecodeError:
+            details = {}  # Handle JSON decoding errors gracefully
+
+        title = details.get("Title", "")
+        city = details.get("City", "")
+        cleaned_title = clean_title(title, city)
+        row = {
+            "original_index": postcard["original_index"],  # Include original index
+            "front_image_link": postcard["front_image_link"],
+            "back_image_link": postcard["back_image_link"],
+            "Title": cleaned_title,
+            "Region": details.get("Region", ""),
+            "Country": details.get("Country", ""),
+            "City": details.get("City", "")
+        }
+        rows.append(row)
+
+    # Sort rows by the original index
+    sorted_rows = sorted(rows, key=lambda x: x["original_index"])
+
+    # Remove 'original_index' before writing to CSV
+    for row in sorted_rows:
+        row.pop("original_index", None)
+
+    # Write the sorted data to the CSV file
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp_file:
+        with open(tmp_file.name, mode="w", newline="", encoding="utf-8") as file:
+            writer = csv.DictWriter(file, fieldnames=headers)
+            writer.writeheader()
+            writer.writerows(sorted_rows)
+
+    return tmp_file.name
+
+
 
 # Function to encode image to base64
 def encode_image(image_path):
