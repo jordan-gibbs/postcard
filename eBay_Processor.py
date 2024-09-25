@@ -79,9 +79,15 @@ def clean_title(title, city):
 
     return final_title
 
+
 def save_postcards_to_csv(postcards_details):
-    headers = ["front_image_link", "back_image_link", "Title", "Region", "Country", "City"]
+    headers = ["front_image_link", "back_image_link", "Title", "Region", "Country", "City", "Description"]
     rows = []
+
+    boilerplate = """Please inspect the scanned postcard image for condition. All cards are sold as is. Payment is due within 3 days of purchase or we may re-list it for other buyers. Please note we offer VOLUME DISCOUNTS (2 for 10%, 3 for 15%, 4 for 20%, and 10+ for 30%) so please check out our massive store selection. We have 1,000s of cards in stock with views from nearly every state and country, all used with messages, stamps, interesting postal routes, and more. Thank you so much for visiting postal*connection, you are appreciated.
+
+    PS - WE BUY POSTCARDS! Top prices paid for good collections.
+    """
 
     for postcard in postcards_details:
         try:
@@ -91,7 +97,10 @@ def save_postcards_to_csv(postcards_details):
 
         title = details.get("Title", "")
         city = details.get("City", "")
+        description = details.get("Description", "").strip()
+        total_description = f"{description}\n\n{boilerplate}" if description else boilerplate
         cleaned_title = clean_title(title, city)
+
         row = {
             "original_index": postcard["original_index"],  # Include original index
             "front_image_link": postcard["front_image_link"],
@@ -99,7 +108,8 @@ def save_postcards_to_csv(postcards_details):
             "Title": cleaned_title,
             "Region": details.get("Region", ""),
             "Country": details.get("Country", ""),
-            "City": details.get("City", "")
+            "City": details.get("City", ""),
+            "Description": total_description
         }
         rows.append(row)
 
@@ -113,54 +123,11 @@ def save_postcards_to_csv(postcards_details):
     # Write the sorted data to the CSV file
     with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp_file:
         with open(tmp_file.name, mode="w", newline="", encoding="utf-8") as file:
-            writer = csv.DictWriter(file, fieldnames=headers)
+            writer = csv.DictWriter(file, fieldnames=headers, quotechar='"', quoting=csv.QUOTE_ALL)
             writer.writeheader()
             writer.writerows(sorted_rows)
 
     return tmp_file.name
-
-
-def save_postcards_to_final_csv(postcards_details):
-    headers = ["front_image_link", "back_image_link", "Title", "Region", "Country", "City"]
-    rows = []
-
-    for postcard in postcards_details:
-        try:
-            details = json.loads(postcard["details"])
-        except json.JSONDecodeError:
-            details = {}  # Handle JSON decoding errors gracefully
-
-        title = details.get("Title", "")
-        city = details.get("City", "")
-        cleaned_title = clean_title(title, city)
-        row = {
-            "original_index": postcard["original_index"],  # Include original index
-            "front_image_link": postcard["front_image_link"],
-            "back_image_link": postcard["back_image_link"],
-            "Title": cleaned_title,
-            "Region": details.get("Region", ""),
-            "Country": details.get("Country", ""),
-            "City": details.get("City", "")
-        }
-        rows.append(row)
-
-    # Sort rows by the original index
-    sorted_rows = sorted(rows, key=lambda x: x["original_index"])
-
-    # Remove 'original_index' before writing to CSV
-    for row in sorted_rows:
-        row.pop("original_index", None)
-
-    # Write the sorted data to the CSV file
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp_file:
-        with open(tmp_file.name, mode="w", newline="", encoding="utf-8") as file:
-            writer = csv.DictWriter(file, fieldnames=headers)
-            writer.writeheader()
-            writer.writerows(sorted_rows)
-
-    return tmp_file.name
-
-
 
 # Function to encode image to base64
 def encode_image(image_path):
@@ -233,6 +200,7 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
     2. **Region**: Identify the U.S. state or region mentioned in the postcard.
     3. **Country**: Identify the country mentioned on the postcard.
     4. **City**: Identify the city or major landmark mentioned on the postcard.
+    5. **Description** Write a short, descriptive, and non-flowery description of the card, preferably including details that aren't necessarily found in the title, containing elements such as (e.g., "written from a mother to a son" "references to farming" "reference to WWI" "a child's handwriting")
 
     Please output the result in the following structure, and NOTHING else:
 
@@ -241,7 +209,8 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
         "Title": "Vintage Georgia Postcard SAVANNAH Beach Highway Palms Oleanders 1983",
         "Region": "Georgia",
         "Country": "USA",
-        "City": "Savannah"
+        "City": "Savannah",
+        "Description": "Features a scenic highway lined with palms and oleanders, likely promoting beach tourism. Sent postmarked from Savannah, with a brief note about a family road trip."
     }
 
     Another Example:
@@ -249,7 +218,8 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
         "Title": "Antique Wyoming Postcard YELLOWSTONE National Park Gibbon Falls Haynes 1913",
         "Region": "Wyoming",
         "Country": "USA",
-        "City": "Yellowstone"
+        "City": "Yellowstone",
+        "Description": "Shows Gibbon Falls, part of a Haynes collection of early park photography. Likely from a traveler describing natural wonders, with references to early park infrastructure."
     }
 
     Another Example:
@@ -257,7 +227,8 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
         "Title": "Antique Florida Postcard ST. PETERSBURG John's Pass Bridge Fishing 1957",
         "Region": "Florida",
         "Country": "USA",
-        "City": "St. Petersburg"
+        "City": "St. Petersburg",
+        "Description": "Depicts fishermen at John's Pass Bridge, a popular tourist and fishing spot. Postcard mentions a family vacation, with references to warm weather and abundant fishing."
     }
 
     Another Example:
@@ -265,7 +236,8 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
         "Title": "Vintage Virginia Postcard NEWPORT NEWS Mariner's Museum Cover to Milwaukee Post 1999",
         "Region": "Virginia",
         "Country": "USA",
-        "City": "Newport News"
+        "City": "Newport News",
+        "Description": "Features a museum display, likely sent from a visitor to Newport News. Includes mention of shipbuilding history, with a personal note about travel to Milwaukee."
     }
 
     Another Example:
@@ -273,7 +245,8 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
         "Title": "Vintage Tennessee Postcard MEMPHIS Romeo & Juliet in Cotton Field Black 1938",
         "Region": "Tennessee",
         "Country": "USA",
-        "City": "Memphis"
+        "City": "Memphis",
+        "Description": "Displays a staged romantic scene of two figures in a cotton field. Likely includes commentary on Southern agriculture or nostalgia, with dated cultural imagery."
     }
 
     If any of the information cannot be found on the postcard, please output just '' for that field.
