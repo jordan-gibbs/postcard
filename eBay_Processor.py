@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import re
 import json
 import numpy as np
+import html
 
 
 def clean_title(title, city):
@@ -80,14 +81,25 @@ def clean_title(title, city):
     return final_title
 
 
+def convert_to_html(text):
+    # Escape special HTML characters
+    text = html.escape(text)
+    # Split text into paragraphs by splitting on double newlines
+    paragraphs = text.split('\n\n')
+    # Wrap each paragraph in <p> tags, replacing single newlines with <br>
+    html_paragraphs = ['<p>{}</p>'.format(paragraph.replace('\n', '<br>')) for paragraph in paragraphs]
+    # Join the paragraphs
+    return ''.join(html_paragraphs)
+
+
 def save_postcards_to_csv(postcards_details):
     headers = ["front_image_link", "back_image_link", "Title", "Region", "Country", "City", "Description"]
     rows = []
 
     boilerplate = """Please inspect the scanned postcard image for condition. All cards are sold as is. Payment is due within 3 days of purchase or we may re-list it for other buyers. Please note we offer VOLUME DISCOUNTS (2 for 10%, 3 for 15%, 4 for 20%, and 10+ for 30%) so please check out our massive store selection. We have 1,000s of cards in stock with views from nearly every state and country, all used with messages, stamps, interesting postal routes, and more. Thank you so much for visiting postal*connection, you are appreciated.
 
-    PS - WE BUY POSTCARDS! Top prices paid for good collections.
-    """
+PS - WE BUY POSTCARDS! Top prices paid for good collections.
+"""
 
     for postcard in postcards_details:
         try:
@@ -99,6 +111,10 @@ def save_postcards_to_csv(postcards_details):
         city = details.get("City", "")
         description = details.get("Description", "").strip()
         total_description = f"{description}\n\n{boilerplate}" if description else boilerplate
+
+        # Convert the total_description to HTML
+        total_description_html = convert_to_html(total_description)
+
         cleaned_title = clean_title(title, city)
 
         row = {
@@ -109,7 +125,7 @@ def save_postcards_to_csv(postcards_details):
             "Region": details.get("Region", ""),
             "Country": details.get("Country", ""),
             "City": details.get("City", ""),
-            "Description": total_description
+            "Description": total_description_html  # Use the HTML-formatted description
         }
         rows.append(row)
 
@@ -128,6 +144,7 @@ def save_postcards_to_csv(postcards_details):
             writer.writerows(sorted_rows)
 
     return tmp_file.name
+
 
 # Function to encode image to base64
 def encode_image(image_path):
