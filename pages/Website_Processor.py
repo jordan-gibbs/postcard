@@ -381,18 +381,22 @@ def analyze_row_with_ai(row, headers):
 
         Example 2: 
         Summer, Southwest, Social History, Embossed
+        
+        DO NOT UNDER ANY CIRCUMSTANCES OUTPUT ANY KEYWORD THAT ISN't IN THE LIST BELOW. YOU HAVE FAILED YOUR TASK IF 
+        YOU DO SO.  
 
         You will never output anything else. 
         
         Here are the list of keywords you can choose from. You will never output any other keyword. Never put the 
-        place name in the keywords unless it exists from the keywords below:
+        city name in the keywords.
         
-        Keywords you can choose from:
+        Here are the ONLY keywords you can choose from:
         {keyword_list} 
         """
 
     response = client.chat.completions.create(
         model="gpt-4o",
+        temperature=0,
         messages=[
             {"role": "system", "content": prompt},
             {"role": "user", "content": f"Here is the row you'll be analyzing:\n{row_string}"},
