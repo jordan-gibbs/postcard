@@ -33,9 +33,24 @@ def save_postcards_to_csv(postcards_details):
         title = details.get("Title", "")
         city = details.get("City", "")
         cleaned_title = clean_title(title, city)
+
+        front_image_link = postcard.get("front_image_link", "")
+        # Define the pattern for 'xx-xxx' (alphanumeric characters with a hyphen)
+        pattern = r'[A-Za-z0-9]{2}-[A-Za-z0-9]{3}'
+        # Search for the pattern in the front_image_link
+        match = re.search(pattern, front_image_link)
+        if match:
+            sku_prefix = match.group(0)  # If a match is found, use it
+            print(f"Matched SKU Prefix: {sku_prefix}")  # For debugging purposes
+        else:
+            sku_prefix = 'NOSKU'  # Default SKU prefix if no match is found
+            print("No SKU Prefix found, using default: NOSKU")  # For debugging purposes
         # Generate SKU
-        SKU = '3A-001_' + '{:02d}'.format(counter)
-        counter += 1  # Increment counter
+        SKU = f'{sku_prefix}_{counter:02d}'
+        # Increment counter
+        counter += 1
+        # For debugging purposes, print SKU
+        print("Generated SKU:", SKU)
 
         row = {
             "front_image_link": postcard.get("front_image_link", ""),
@@ -289,8 +304,96 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
 
 
 import time  # For adding delays between retries if necessary
+import requests
+import json
 
-# Updated process_batch function with retry logic
+
+def date_retry(api_key, front_image_path, back_image_path, retries=3):
+    front_image_base64 = encode_image(front_image_path)
+    back_image_base64 = encode_image(back_image_path)
+
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
+
+    prompt = """
+    You are a postcard analyzer.
+    You are given two images of a vintage or antique postcard:
+
+    1. The first image is the **front** of the postcard.
+    2. The second image is the **back** of the postcard, which contains text and possibly other relevant details.
+
+    I need you to analyze both the front and back images and find the date and the year. 
+
+    Example Output 1:
+    {      
+        "Date": "March 6",
+        "Year": "1908",
+    }
+
+    Another Example:
+    {
+        "Date": "July 29",
+        "Year": "1909",
+    }
+
+    Another Example:
+    {
+        "Date": "July 3",
+        "Year": "1908",
+    }
+
+    If any of the information cannot be found on the postcard, please output just "" for that field. You can infer or guess if you feel you have enough information. 
+
+    The date is often located in a stamp on the card. Focus on the stamp area if you cannot find a date.
+
+    Never put a year or another month in the day datapoint, always output (Month Day) i.e May 16
+
+    Never output any sort of formatting block, i.e. ```json just output the raw string.
+    """
+
+    payload = {
+        "model": "gpt-4o-2024-08-06",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": prompt
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{front_image_base64}",
+                            "detail": "high"
+                        }
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{back_image_base64}",
+                            "detail": "high"
+                        }
+                    }
+                ]
+            }
+        ],
+        "max_tokens": 50,
+    }
+
+    response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
+    response_json = response.json()
+    details = response_json['choices'][0]['message'][
+        'content'] if 'choices' in response_json else "Details not available"
+    print(details)
+    return details
+
+
+import time
+
+
 def process_batch(api_key, batch, retries=3):
     postcards_details = []
     failed_postcards = []
@@ -308,13 +411,47 @@ def process_batch(api_key, batch, retries=3):
         while attempts < retries and not success:
             try:
                 postcard_details = get_postcard_details(api_key, front_image_path, back_image_path)
+
+                # Parse postcard_details into a dict
+                try:
+                    details_dict = json.loads(postcard_details)
+                except json.JSONDecodeError as e:
+                    # If JSON parsing fails, raise an exception to trigger retry
+                    raise Exception(f"JSON parsing error: {e}")
+
+                # Check if 'Date' or 'Year' is missing or invalid
+                date_missing = not details_dict.get('Date')
+                year_missing = not details_dict.get('Year')
+
+                if date_missing or year_missing:
+                    # Retry one more time to get 'Date' and 'Year' fields
+                    postcard_details_retry = date_retry(api_key, front_image_path, back_image_path)
+
+                    # Parse the retry result
+                    try:
+                        details_dict_retry = json.loads(postcard_details_retry)
+                    except json.JSONDecodeError as e:
+                        # If JSON parsing fails, log error and proceed
+                        print(f"Postcard at index {original_index} retry JSON parsing error: {e}")
+                        details_dict_retry = {}
+
+                    # Update 'Date' and 'Year' in the original details_dict
+                    if details_dict_retry.get('Date'):
+                        details_dict['Date'] = details_dict_retry['Date']
+                    if details_dict_retry.get('Year'):
+                        details_dict['Year'] = details_dict_retry['Year']
+
+                # Serialize details_dict back to JSON string
+                postcard_details_json = json.dumps(details_dict)
+
+                # Add to postcards_details
                 postcards_details.append({
                     "original_index": original_index,
                     "front_image": postcard["front_image_filename"],
                     "back_image": postcard["back_image_filename"],
                     "front_image_link": front_image_link,
                     "back_image_link": back_image_link,
-                    "details": postcard_details,
+                    "details": postcard_details_json,  # Store the JSON string
                 })
                 success = True  # Successfully processed postcard
             except Exception as exc:
@@ -331,6 +468,7 @@ def process_batch(api_key, batch, retries=3):
                     time.sleep(1)  # Optional: Add a delay before retrying
 
     return postcards_details, failed_postcards
+
 
 # Updated process_postcards_in_folder function
 def process_postcards_in_folder(api_key, postcards, workers=10, retries=3):
@@ -415,9 +553,13 @@ def analyze_row_with_ai(row, headers):
     )
 
     keywords = response.choices[0].message.content
-    print(keywords)
+    # Split the keywords string into a list, remove any that are not in the keyword_list
+    valid_keywords = [kw.strip() for kw in keywords.split(",") if kw.strip() in keyword_list]
 
-    return keywords
+    # Re-concatenate the valid keywords into a single string
+    cleaned_keywords = ", ".join(valid_keywords)
+
+    return cleaned_keywords
 
 
 def process_row_batch(rows, headers):

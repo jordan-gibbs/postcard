@@ -127,9 +127,24 @@ PS - WE BUY POSTCARDS! Top prices paid for good collections.
         front_image_link = remove_code_from_url(postcard["front_image_link"])
         back_image_link = remove_code_from_url(postcard["back_image_link"])
 
+        # Example of your link (assuming you already have this in `details`)
+        front_image_link = details.get("front_image_link", "")
+        # Define the pattern for 'xx-xxx' (alphanumeric characters with a hyphen)
+        pattern = r'[A-Za-z0-9]{2}-[A-Za-z0-9]{3}'
+        # Search for the pattern in the front_image_link
+        match = re.search(pattern, front_image_link)
+        if match:
+            sku_prefix = match.group(0)  # If a match is found, use it
+            print(f"Matched SKU Prefix: {sku_prefix}")  # For debugging purposes
+        else:
+            sku_prefix = '3A-001'  # Default SKU prefix if no match is found
+            print("No SKU Prefix found, using default: 3A-001")  # For debugging purposes
         # Generate SKU
-        SKU = '2A-' + '{:03d}'.format(counter)
-        counter += 1  # Increment counter
+        SKU = f'{sku_prefix}_{counter:02d}'
+        # Increment counter
+        counter += 1
+        # For debugging purposes, print SKU
+        print("Generated SKU:", SKU)
 
         row = {
             "original_index": postcard["original_index"],  # Include original index
