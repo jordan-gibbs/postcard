@@ -316,7 +316,7 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
     """
 
     payload = {
-        "model": "gpt-4o-mini",
+        "model": "gpt-4o-2024-08-06",
         "messages": [
             {
                 "role": "user",

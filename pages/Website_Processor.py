@@ -20,8 +20,9 @@ def clean_title(title, city):
 
 def save_postcards_to_csv(postcards_details):
     headers = ["front_image_link", "back_image_link", "Title", "Date", "Region", "State", "Country", "City",
-               "Destination City", "Destination Address", "Recipient", "Year", "Description"]
+               "Destination City", "Destination Address", "Recipient", "Year", "Description", "SKU"]
     rows = []
+    counter = 1
 
     for postcard in postcards_details:
         try:
@@ -32,6 +33,9 @@ def save_postcards_to_csv(postcards_details):
         title = details.get("Title", "")
         city = details.get("City", "")
         cleaned_title = clean_title(title, city)
+        # Generate SKU
+        SKU = '3A-001_' + '{:02d}'.format(counter)
+        counter += 1  # Increment counter
 
         row = {
             "front_image_link": postcard.get("front_image_link", ""),
@@ -46,6 +50,7 @@ def save_postcards_to_csv(postcards_details):
             "Recipient": details.get("Recipient", ""),
             "Year": details.get("Year", ""),
             "Description": details.get("Description", ""),
+            "SKU": SKU
         }
         rows.append(row)
 
@@ -62,10 +67,10 @@ def save_postcards_to_csv(postcards_details):
 def map_and_reorder_csv(input_csv, output_csv):
     # Define original and new headers
     original_headers = ["front_image_link", "back_image_link", "Title", "Date", "Region", "State", "Country", "City",
-                        "Destination City", "Destination Address", "Recipient", "Year", "Description", "keywords"]
+                        "Destination City", "Destination Address", "Recipient", "Year", "Description", "keywords", "SKU"]
 
     new_headers = ["Title", "xTags", "Orig. City", "Orig. State", "Orig. Country", "Recipient", "Dest. Street",
-                   "Dest. City", "Date", "Year", "Notes"]
+                   "Dest. City", "Date", "Year", "Notes", "SKU"]
 
     # Map original headers to new ones
     header_mapping = {
@@ -79,7 +84,8 @@ def map_and_reorder_csv(input_csv, output_csv):
         "Destination City": "Dest. City",
         "Recipient": "Recipient",
         "Date": "Date",
-        "Year": "Year"
+        "Year": "Year",
+        "SKU": "SKU"
     }
 
     # Open the input and output CSV files
@@ -104,9 +110,12 @@ def map_and_reorder_csv(input_csv, output_csv):
             # Write the new row to the output file
             writer.writerow(new_row)
 
-            # Add 4 blank rows after each entry
+            # Write 4 blank rows, but keep the SKU value the same
             for _ in range(4):
-                writer.writerow({header: '' for header in new_headers})
+                blank_row = {header: '' for header in new_headers}  # Create a blank row
+                blank_row["SKU"] = new_row["SKU"]  # Retain the SKU in the blank rows
+                writer.writerow(blank_row)
+
 
 
 # Function to encode image to base64
@@ -224,8 +233,8 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
     If any of the information cannot be found on the postcard, please output just "" for that field. You can infer or guess if you feel you have enough information. 
 
     Always try to put the year in if available. 
-
-    Never ever shorten a city name, ie never do New York -> NY. 
+    
+    You MUST ensure that the destination city field has the city and state abbreviation, never the whole state name written out, i.e. Liberty NY, Great Falls MT, etc.  
     
     Never put a year or another month in the day datapoint, always output (Month Day) i.e May 16
     
@@ -234,13 +243,15 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
 
     Never output any sort of formatting block, i.e. ```json just output the raw string.
     
+    Never output bad spacing in the titles, i.e. if you transcribe a card as 'VirginiaUniversity' write it in the title as 'Virginia University' with proper spacing. 
+    
     Never discuss any missing information in the description, just write it as if there is nothing missing. 
 
     Make sure to carefully analyze the **text on the back** of the postcard as well, since it may contain valuable information like the city, region, or country.
     """
 
     payload = {
-        "model": "gpt-4o-mini",
+        "model": "gpt-4o-2024-08-06",
         "messages": [
             {
                 "role": "user",
@@ -303,7 +314,7 @@ def process_batch(api_key, batch, retries=3):
                     "back_image": postcard["back_image_filename"],
                     "front_image_link": front_image_link,
                     "back_image_link": back_image_link,
-                    "details": postcard_details
+                    "details": postcard_details,
                 })
                 success = True  # Successfully processed postcard
             except Exception as exc:
@@ -514,7 +525,7 @@ def main():
                         # Remove any non-Latin characters
                         text = ''.join([c for c in text if unicodedata.category(c) != 'Mn'])
                         # Remove unwanted symbols, keeping basic punctuation and alphanumeric characters
-                        text = re.sub(r'[^A-Za-z0-9\s.,?!\'"<>-]', '', text)
+                        text = re.sub(r'[^A-Za-z0-9\s.,?!\'"<>-_]', '', text)
                         return text
 
                     df = pd.read_csv(csv_file)
