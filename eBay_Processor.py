@@ -65,18 +65,21 @@ def clean_title(title, city):
     full_title_length = len(title_without_year.strip()) + len(year.strip()) + 1  # +1 for the space before the year
     words = title_without_year.split()
 
-    while full_title_length > 80 and words:
-        # Remove a word from the beginning until we are under 80 characters
-        words.pop(0)
-        title_without_year = ' '.join(words)
-        full_title_length = len(title_without_year.strip()) + len(year.strip()) + 1
-
     # Reconstruct the title by placing the year back in its original position
     if year:
         final_title = title_without_year[:year_position].strip() + " " + year + " " + title_without_year[year_position:].strip()
         final_title = final_title.strip()
     else:
         final_title = title_without_year.strip()
+
+    final_title_length = len(title_without_year.strip()) + len(year.strip()) + 1  # +1 for the space before the year
+    words = final_title.split()
+
+    while final_title_length > 80 and words:
+        # Remove a word from the beginning until we are under 80 characters
+        words.pop(0)
+        final_title = ' '.join(words)
+        final_title_length = len(final_title.strip()) + 1
 
     return final_title
 
@@ -126,9 +129,7 @@ PS - WE BUY POSTCARDS! Top prices paid for good collections.
         # Remove 'xx-001' from the image links
         front_image_link = remove_code_from_url(postcard["front_image_link"])
         back_image_link = remove_code_from_url(postcard["back_image_link"])
-
-        # Example of your link (assuming you already have this in `details`)
-        front_image_link = details.get("front_image_link", "")
+        front_image_link = postcard.get("front_image_link", "")
         # Define the pattern for 'xx-xxx' (alphanumeric characters with a hyphen)
         pattern = r'[A-Za-z0-9]{2}-[A-Za-z0-9]{3}'
         # Search for the pattern in the front_image_link
@@ -137,8 +138,8 @@ PS - WE BUY POSTCARDS! Top prices paid for good collections.
             sku_prefix = match.group(0)  # If a match is found, use it
             print(f"Matched SKU Prefix: {sku_prefix}")  # For debugging purposes
         else:
-            sku_prefix = '3A-001'  # Default SKU prefix if no match is found
-            print("No SKU Prefix found, using default: 3A-001")  # For debugging purposes
+            sku_prefix = 'NOSKU'  # Default SKU prefix if no match is found
+            print("No SKU Prefix found, using default: NOSKU")  # For debugging purposes
         # Generate SKU
         SKU = f'{sku_prefix}_{counter:02d}'
         # Increment counter
