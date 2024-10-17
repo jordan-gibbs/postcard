@@ -32,7 +32,7 @@ def save_postcards_to_csv(postcards_details, first_column_set):
 
         title = details.get("Title", "")
         city = details.get("City", "")
-        cleaned_title = clean_title(title, city)
+        cleaned_title = title
 
         front_image_link = postcard.get("front_image_link", "")
         # Define the pattern for 'xx-xxx' (alphanumeric characters with a hyphen)
