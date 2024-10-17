@@ -18,7 +18,7 @@ def clean_title(title, city):
     return title
 
 
-def save_postcards_to_csv(postcards_details):
+def save_postcards_to_csv(postcards_details, first_column_set):
     headers = ["front_image_link", "back_image_link", "Title", "Date", "Region", "State", "Country", "City",
                "Destination City", "Destination Address", "Recipient", "Year", "Description", "SKU"]
     rows = []
@@ -52,6 +52,35 @@ def save_postcards_to_csv(postcards_details):
         # For debugging purposes, print SKU
         print("Generated SKU:", SKU)
 
+        # Function to extract text before the first two-capital-letter sequence
+        def get_text_before_capitalized_pair(destination):
+            # Use regex to find two consecutive capital letters
+            match = re.search(r'\b[A-Z]{2}\b', destination)
+
+            if match:
+                # Return everything before the first capitalized pair
+                return destination[:match.start()].strip()
+
+            # If no match is found, return the whole string
+            return destination
+
+        # Example function to check if the variable is valid
+        def check_variable(variable_to_check):
+            return variable_to_check.lower() in first_column_set  # Assuming first_column_set is pre-defined
+
+        # Main logic to handle destination check
+        destination = details.get("Destination City", "")
+        print("Original destination:", destination)
+
+        # Get the part before the first two-capital-letter sequence
+        text_before_capitalized_pair = get_text_before_capitalized_pair(destination)
+
+        # Perform your check on the extracted substring
+        if check_variable(text_before_capitalized_pair):
+            destination = destination
+        else:
+            destination = ""
+
         row = {
             "front_image_link": postcard.get("front_image_link", ""),
             "back_image_link": postcard.get("back_image_link", ""),
@@ -60,7 +89,7 @@ def save_postcards_to_csv(postcards_details):
             "State": details.get("State", ""),
             "Country": details.get("Country", ""),
             "City": details.get("City", ""),
-            "Destination City": details.get("Destination City", ""),
+            "Destination City": destination,
             "Destination Address": details.get("Destination Address",""),
             "Recipient": details.get("Recipient", ""),
             "Year": details.get("Year", ""),
@@ -631,6 +660,12 @@ def main():
         layout="centered",
     )
 
+    import pandas as pd
+    df = pd.read_csv('us-post-offices.csv', usecols=[0])
+    first_column = df.iloc[:, 0].str.lower()
+    first_column_set = set(first_column)
+
+
     st.title("🌐Website Processor")
     st.write("Upload a set of postcard image links (front and back) to get details for PaleoGreetings.")
 
@@ -650,7 +685,7 @@ def main():
                     postcards_details, failed_postcards = process_postcards_in_folder(api_key, postcards, workers=10)
 
                     # Save the results to a CSV file
-                    csv_file = save_postcards_to_csv(postcards_details)
+                    csv_file = save_postcards_to_csv(postcards_details, first_column_set)
 
                 with st.spinner("Adding keywords..."):
                     process_csv_with_keywords(csv_file, csv_file)

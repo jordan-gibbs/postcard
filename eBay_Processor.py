@@ -41,8 +41,6 @@ def clean_title(title, city):
         if city_pattern.search(title):
             title = city_pattern.sub(city.upper(), title)  # Replace city name with uppercase
 
-    # Now let's handle ensuring the string length doesn't exceed 80 characters
-
     # Find the 4-digit year or a year with 's' (like 1950s)
     year_pattern = re.compile(r'(\b\d{4}s?\b)')
     year_match = year_pattern.search(title)
@@ -61,10 +59,6 @@ def clean_title(title, city):
     else:
         title_without_year = title  # If no year is found, treat the whole title normally
 
-    # Check if the title length (including year) exceeds 80 characters
-    full_title_length = len(title_without_year.strip()) + len(year.strip()) + 1  # +1 for the space before the year
-    words = title_without_year.split()
-
     # Reconstruct the title by placing the year back in its original position
     if year:
         final_title = title_without_year[:year_position].strip() + " " + year + " " + title_without_year[year_position:].strip()
@@ -72,7 +66,7 @@ def clean_title(title, city):
     else:
         final_title = title_without_year.strip()
 
-    final_title_length = len(title_without_year.strip()) + len(year.strip()) + 1  # +1 for the space before the year
+    final_title_length = len(final_title)  # +1 for the space before the year
     words = final_title.split()
 
     while final_title_length > 80 and words:
@@ -99,8 +93,11 @@ def remove_code_from_url(url):
     # Remove the dynamic "xx-001" segment from the URL
     return re.sub(r'(archives/)[^/]+/', r'\1', url)
 
-def save_postcards_to_csv(postcards_details):
-    headers = ["front_image_link", "back_image_link", "SKU", "Title", "Region", "Country", "City", "Era", "Description"]
+def save_postcards_to_csv(postcards_details, first_column_set):
+    headers = ["front_image_link", "back_image_link", "SKU", "Title", "Cancel Title", "Destination Title", "Region",
+               "Country", "City",
+               "Era",
+               "Description"]
     rows = []
 
     boilerplate = """Please inspect the scanned postcard image for condition. All cards are sold as is. Payment is due within 3 days of purchase or we may re-list it for other buyers. Please note we offer VOLUME DISCOUNTS (2 for 10%, 3 for 15%, 4 for 20%, and 10+ for 30%) so please check out our massive store selection. We have 1,000s of cards in stock with views from nearly every state and country, all used with messages, stamps, interesting postal routes, and more. Thank you so much for visiting postal*connection, you are appreciated.
@@ -126,10 +123,39 @@ PS - WE BUY POSTCARDS! Top prices paid for good collections.
 
         cleaned_title = clean_title(title, city)
 
-        # Remove 'xx-001' from the image links
-        front_image_link = remove_code_from_url(postcard["front_image_link"])
-        back_image_link = remove_code_from_url(postcard["back_image_link"])
+
+        # Stuff title with origin and destination
+        origin = details.get("Origin City", "")
+        print(origin)
+        destination = details.get("Destination City", "")
+        print(destination)
+
+        def check_variable(variable_to_check):
+            return variable_to_check.lower() in first_column_set
+
+        if check_variable(origin):
+            origin = origin
+        else:
+            origin = ""
+
+        if check_variable(destination):
+            destination = destination
+        else:
+            destination = ""
+
+        if len(cleaned_title) + len(origin) < 80:
+            cancel_title = f"{origin} {cleaned_title}"
+        else:
+            cancel_title = ""
+
+        if len(cleaned_title) + len(destination) < 80:
+            destination_title = f"{cleaned_title} {destination}"
+        else:
+            destination_title = ""
+
+
         front_image_link = postcard.get("front_image_link", "")
+        back_image_link = postcard.get("back_image_link", "")
         # Define the pattern for 'xx-xxx' (alphanumeric characters with a hyphen)
         pattern = r'[A-Za-z0-9]{2}-[A-Za-z0-9]{3}'
         # Search for the pattern in the front_image_link
@@ -153,6 +179,8 @@ PS - WE BUY POSTCARDS! Top prices paid for good collections.
             "back_image_link": back_image_link,
             "SKU": SKU,
             "Title": cleaned_title,
+            "Cancel Title": cancel_title,
+            "Destination Title": destination_title,
             "Region": details.get("Region", ""),
             "Country": details.get("Country", ""),
             "City": details.get("City", ""),
@@ -177,15 +205,16 @@ PS - WE BUY POSTCARDS! Top prices paid for good collections.
 
     return tmp_file.name
 
+
 # Helper functions (you should have these defined elsewhere in your code)
 def convert_to_html(text):
     # Implement your HTML conversion logic here
     return text  # Placeholder implementation
 
+
 def clean_title(title, city):
     # Implement your title cleaning logic here
     return title  # Placeholder implementation
-
 
 
 # Function to encode image to base64
@@ -261,6 +290,9 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
     4. **City**: Identify the city or major landmark mentioned on the postcard.
     5. **Era**: You must identify the proper era of the card from these choices: Undivided Back (1901-1907), Divided Back (1907-1915), White Border (1915-1930), Linen (1930-1945), Photochrome (1945-now). You can only choose from those.
     6. **Description** Write a short, descriptive, and non-flowery description of the card, preferably including details that aren't necessarily found in the title, containing elements such as (e.g., "written from a mother to a son" "references to farming" "reference to WWI" "a child's handwriting"). You must also definitively state where the card was sent, the recipients name, address, town, and state/country in the description. 
+    7. **Destination City** If available, write the destination city, ONLY THE CITY. 
+    8. **Origin City** If available, write the origin city, ONLY THE CITY.
+
 
     Please output the result in the following structure, and NOTHING else:
 
@@ -271,7 +303,10 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
         "Country": "USA",
         "City": "Savannah",
         "Era": "Photochrome (1945-now)",
-        "Description": "Features a scenic highway lined with palms and oleanders, likely promoting beach tourism. Sent postmarked from Savannah, with a brief note about a family road trip."
+        "Description": "Features a scenic highway lined with palms and oleanders, likely promoting beach tourism. 
+        Sent postmarked from Savannah, with a brief note about a family road trip.",
+        "Destination City": "Tallahassee",
+        "Origin City": "Aaron"
     }
 
     Another Example:
@@ -280,7 +315,10 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
         "Region": "Wyoming",
         "Country": "USA",
         "City": "Yellowstone",
-        "Description": "Shows Gibbon Falls, part of a Haynes collection of early park photography. Likely from a traveler describing natural wonders, with references to early park infrastructure."
+        "Description": "Shows Gibbon Falls, part of a Haynes collection of early park photography. Likely from a 
+        traveler describing natural wonders, with references to early park infrastructure.",
+        "Destination City": "Billings",
+        "Origin City": "Cheyenne"
     }
 
     Another Example:
@@ -290,7 +328,10 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
         "Country": "USA",
         "City": "St. Petersburg",
         "Era": "Divided Back (1907-1915)",
-        "Description": "Depicts fishermen at John's Pass Bridge, a popular tourist and fishing spot. Postcard mentions a family vacation, with references to warm weather and abundant fishing."
+        "Description": "Depicts fishermen at John's Pass Bridge, a popular tourist and fishing spot. Postcard 
+        mentions a family vacation, with references to warm weather and abundant fishing.",
+        "Destination City": "Boston",
+        "Origin City": "Chicago"
     }
 
     Another Example:
@@ -300,7 +341,10 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
         "Country": "USA",
         "City": "Newport News",
         "Era": "Photochrome (1945-now)",
-        "Description": "Features a museum display, likely sent from a visitor to Newport News. Includes mention of shipbuilding history, with a personal note about travel to Milwaukee."
+        "Description": "Features a museum display, likely sent from a visitor to Newport News. Includes mention of 
+        shipbuilding history, with a personal note about travel to Milwaukee.",
+        "Destination City": "Billings",
+        "Origin City": "Newport News"
     }
 
     Another Example:
@@ -310,7 +354,9 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
         "Country": "USA",
         "City": "Memphis",
         "Era": "Linen (1930-1945)",
-        "Description": "Displays a staged romantic scene of two figures in a cotton field. Likely includes commentary on Southern agriculture or nostalgia, with dated cultural imagery."
+        "Description": "Displays a staged romantic scene of two figures in a cotton field. Likely includes commentary on Southern agriculture or nostalgia, with dated cultural imagery.",
+        "Destination City": "Bozeman",
+        "Origin City": "Memphis"
     }
 
     If any of the information cannot be found on the postcard, please output just '' for that field.
@@ -446,6 +492,12 @@ def main():
         layout="centered",
     )
 
+    import pandas as pd
+
+    df = pd.read_csv('us-post-offices.csv', usecols=[0])
+    first_column = df.iloc[:, 0].str.lower()
+    first_column_set = set(first_column)
+
     st.title("🖼️eBay Processor")
     st.write("Upload a set of postcard image links (front and back) for Ebay processing.")
 
@@ -466,7 +518,7 @@ def main():
                     st.write("Processing complete!")
 
                     # Save the results to a CSV file
-                    csv_file = save_postcards_to_csv(postcards_details)
+                    csv_file = save_postcards_to_csv(postcards_details, first_column_set)
 
                     # Read the CSV file and store data in session state
                     with open(csv_file, "rb") as f:
