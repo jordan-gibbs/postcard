@@ -69,11 +69,20 @@ def clean_title(title, city):
     final_title_length = len(final_title)  # +1 for the space before the year
     words = final_title.split()
 
-    while final_title_length > 80 and words:
-        # Remove a word from the beginning until we are under 80 characters
-        words.pop(0)
+    # Check if initial title length is 80 or more
+    if final_title_length >= 80:
+        words = final_title.split()
+
+        # Step 1: Remove "Vintage" and "Postcard" if they exist in the list
+        words = [word for word in words if word not in ["Vintage", "Postcard"]]
         final_title = ' '.join(words)
-        final_title_length = len(final_title.strip()) + 1
+        final_title_length = len(final_title.strip())
+
+        # Step 2: If still over 80, keep removing the first word until the title is under 80 characters
+        while final_title_length > 80 and words:
+            words.pop(0)
+            final_title = ' '.join(words)
+            final_title_length = len(final_title.strip())
 
     return final_title
 
@@ -123,7 +132,6 @@ PS - WE BUY POSTCARDS! Top prices paid for good collections.
 
         cleaned_title = clean_title(title, city)
 
-
         # Stuff title with origin and destination
         origin = details.get("Origin City", "")
         print(origin)
@@ -133,25 +141,54 @@ PS - WE BUY POSTCARDS! Top prices paid for good collections.
         def check_variable(variable_to_check):
             return variable_to_check.lower() in first_column_set
 
+        def validate_destination(destination):
+            # Use regex to split destination into location and state code parts
+            match = re.match(r"^(.*?)(?=\s[A-Z]{2}$)", destination)
+
+            if match:
+                location = match.group(1).strip()  # Extract the location part
+                print(location)
+                state_code = destination[len(location):].strip()  # Extract the state code part
+                print(state_code)
+                if check_variable(location):  # Run the validity check on the location
+                    # Reconstruct and return if valid
+                    return f"{location.title()} {state_code}"
+            return ""  # Return an empty string if invalid
+
         if check_variable(origin):
             origin = origin
         else:
             origin = ""
 
-        if check_variable(destination):
-            destination = destination
-        else:
-            destination = ""
+        destination = validate_destination(destination)
 
-        if len(cleaned_title) + len(origin) < 80:
-            cancel_title = f"{origin} {cleaned_title}"
-        else:
-            cancel_title = ""
+        # Step 1: Generate the full titles
+        cancel_title = f"{origin} {cleaned_title}"
+        destination_title = f"{cleaned_title} to {destination}"
 
-        if len(cleaned_title) + len(destination) < 80:
-            destination_title = f"{cleaned_title} {destination}"
-        else:
-            destination_title = ""
+        # Step 2: Truncate cancel_title if it exceeds 80 characters
+        if len(cancel_title) >= 80:
+            cancel_words = cancel_title.split()
+            # Remove "Vintage" and "Postcard" if present
+            cancel_words = [word for word in cancel_words if word not in ["Vintage", "Postcard"]]
+            # Truncate from the beginning until the title is under 80 characters
+            while len(' '.join(cancel_words)) >= 80 and cancel_words:
+                cancel_words.pop(0)
+            cancel_title = ' '.join(cancel_words) if len(' '.join(cancel_words)) < 80 else ""
+
+        # Step 3: Truncate destination_title if it exceeds 80 characters
+        if len(destination_title) >= 80:
+            destination_words = destination_title.split()
+            # Remove "Vintage" and "Postcard" if present
+            destination_words = [word for word in destination_words if word not in ["Vintage", "Postcard"]]
+            # Truncate from the beginning until the title is under 80 characters
+            while len(' '.join(destination_words)) >= 80 and destination_words:
+                destination_words.pop(0)
+            destination_title = ' '.join(destination_words) if len(' '.join(destination_words)) < 80 else ""
+
+        # Results
+        print("Cancel Title:", cancel_title)
+        print("Destination Title:", destination_title)
 
 
         front_image_link = postcard.get("front_image_link", "")
@@ -206,15 +243,20 @@ PS - WE BUY POSTCARDS! Top prices paid for good collections.
     return tmp_file.name
 
 
-# Helper functions (you should have these defined elsewhere in your code)
-def convert_to_html(text):
-    # Implement your HTML conversion logic here
-    return text  # Placeholder implementation
+import unicodedata
+import re
+import pandas as pd
 
 
-def clean_title(title, city):
-    # Implement your title cleaning logic here
-    return title  # Placeholder implementation
+# Function to clean and normalize text
+def clean_text(text):
+    # Normalize the text to decompose accents
+    text = unicodedata.normalize('NFKD', str(text))
+    # Remove any non-Latin characters
+    text = ''.join([c for c in text if unicodedata.category(c) != 'Mn'])
+    # Remove unwanted symbols, keeping basic punctuation and alphanumeric characters
+    text = re.sub(r'[^A-Za-z0-9\s.,?!\'"<>-_]', '', text)
+    return text
 
 
 # Function to encode image to base64
@@ -284,13 +326,13 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
 
     I need you to analyze both the front and back images and provide the following information:
 
-    1. **Title**: Create a descriptive title for the postcard based on the front and back. The title should be **90 characters or less**.
+    1. **Title**: Create a descriptive title for the postcard based on the front and back. The title should be **70 characters or less**.
     2. **Region**: Identify the U.S. state or region mentioned in the postcard.
     3. **Country**: Identify the country mentioned on the postcard.
     4. **City**: Identify the city or major landmark mentioned on the postcard.
     5. **Era**: You must identify the proper era of the card from these choices: Undivided Back (1901-1907), Divided Back (1907-1915), White Border (1915-1930), Linen (1930-1945), Photochrome (1945-now). You can only choose from those.
     6. **Description** Write a short, descriptive, and non-flowery description of the card, preferably including details that aren't necessarily found in the title, containing elements such as (e.g., "written from a mother to a son" "references to farming" "reference to WWI" "a child's handwriting"). You must also definitively state where the card was sent, the recipients name, address, town, and state/country in the description. 
-    7. **Destination City** If available, write the destination city, ONLY THE CITY. 
+    7. **Destination City** If available, write the destination city and the state, no comma eg Billings MT
     8. **Origin City** If available, write the origin city, ONLY THE CITY.
 
 
@@ -298,64 +340,64 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
 
     Example Output:
     {
-        "Title": "Vintage Georgia Postcard SAVANNAH Beach Highway Palms Oleanders 1983",
+        "Title": "Vintage Georgia Postcard SAVANNAH Beach Highway 1983",
         "Region": "Georgia",
         "Country": "USA",
         "City": "Savannah",
         "Era": "Photochrome (1945-now)",
         "Description": "Features a scenic highway lined with palms and oleanders, likely promoting beach tourism. 
         Sent postmarked from Savannah, with a brief note about a family road trip.",
-        "Destination City": "Tallahassee",
+        "Destination City": "Tallahassee TN",
         "Origin City": "Aaron"
     }
 
     Another Example:
     {
-        "Title": "Antique Wyoming Postcard YELLOWSTONE National Park Gibbon Falls Haynes 1913",
+        "Title": "Antique Wyoming Postcard YELLOWSTONE National Park Gibbon Falls 1913",
         "Region": "Wyoming",
         "Country": "USA",
         "City": "Yellowstone",
         "Description": "Shows Gibbon Falls, part of a Haynes collection of early park photography. Likely from a 
         traveler describing natural wonders, with references to early park infrastructure.",
-        "Destination City": "Billings",
+        "Destination City": "Billings MT",
         "Origin City": "Cheyenne"
     }
 
     Another Example:
     {
-        "Title": "Antique Florida Postcard ST. PETERSBURG John's Pass Bridge Fishing 1957",
+        "Title": "Antique Florida Postcard ST. PETERSBURG John's Pass Bridge 1957",
         "Region": "Florida",
         "Country": "USA",
         "City": "St. Petersburg",
         "Era": "Divided Back (1907-1915)",
         "Description": "Depicts fishermen at John's Pass Bridge, a popular tourist and fishing spot. Postcard 
         mentions a family vacation, with references to warm weather and abundant fishing.",
-        "Destination City": "Boston",
+        "Destination City": "Boston IL",
         "Origin City": "Chicago"
     }
 
     Another Example:
     {
-        "Title": "Vintage Virginia Postcard NEWPORT NEWS Mariner's Museum Cover to Milwaukee Post 1999",
+        "Title": "Vintage Virginia Postcard NEWPORT NEWS Mariner's Museum 1999",
         "Region": "Virginia",
         "Country": "USA",
         "City": "Newport News",
         "Era": "Photochrome (1945-now)",
         "Description": "Features a museum display, likely sent from a visitor to Newport News. Includes mention of 
         shipbuilding history, with a personal note about travel to Milwaukee.",
-        "Destination City": "Billings",
+        "Destination City": "Billings MT",
         "Origin City": "Newport News"
     }
 
     Another Example:
     {
-        "Title": "Vintage Tennessee Postcard MEMPHIS Romeo & Juliet in Cotton Field Black 1938",
+        "Title": "Vintage Tennessee Postcard MEMPHIS Romeo & Juliet in Cotton Field 1938",
         "Region": "Tennessee",
         "Country": "USA",
         "City": "Memphis",
         "Era": "Linen (1930-1945)",
         "Description": "Displays a staged romantic scene of two figures in a cotton field. Likely includes commentary on Southern agriculture or nostalgia, with dated cultural imagery.",
-        "Destination City": "Bozeman",
+        "Destination City": "Bozeman MT",
         "Origin City": "Memphis"
     }
 
@@ -522,6 +564,21 @@ def main():
 
                     # Read the CSV file and store data in session state
                     with open(csv_file, "rb") as f:
+                        st.session_state.csv_data1 = f.read()
+
+                    df = pd.read_csv(csv_file)
+
+                    # Create a copy of the original DataFrame to store the cleaned data
+                    df_cleaned = df.copy()
+
+                    # Apply the cleaning function only to columns 4-8 in the copy
+                    df_cleaned.loc[:, df.columns[4:9]] = df_cleaned.loc[:, df.columns[4:9]].applymap(clean_text)
+
+                    # Save the cleaned data to a new CSV file
+                    df_cleaned.to_csv('cleaned_file.csv', index=False)
+
+                    # Read the CSV file and store data in session state
+                    with open('cleaned_file.csv', "rb") as f:
                         st.session_state.csv_data1 = f.read()
 
         # Create the download button, using stored CSV data
