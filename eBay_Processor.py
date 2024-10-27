@@ -74,7 +74,7 @@ def clean_title(title, city):
         words = final_title.split()
 
         # Step 1: Remove "Vintage" and "Postcard" if they exist in the list
-        words = [word for word in words if word not in ["Vintage", "Postcard"]]
+        words = [word for word in words if word not in ["Vintage", "Postcard", "Antique"]]
         final_title = ' '.join(words)
         final_title_length = len(final_title.strip())
 
@@ -161,26 +161,45 @@ PS - WE BUY POSTCARDS! Top prices paid for good collections.
             origin = ""
 
         destination = validate_destination(destination)
+        print(f"Destination: {destination}")
 
-        # Step 1: Generate the full titles
-        cancel_title = f"{origin} {cleaned_title}"
-        destination_title = f"{cleaned_title} to {destination}"
+        if origin.lower() != city.lower():
+            # Step 1: Generate the full titles
+            cancel_title = f"{origin} {cleaned_title}"
+        else:
+            cancel_title = ""
+
+        if destination is not "":
+            destination_title = f"{cleaned_title} to {destination}"
+        else:
+            destination_title = ""
 
         # Step 2: Truncate cancel_title if it exceeds 80 characters
         if len(cancel_title) >= 80:
             cancel_words = cancel_title.split()
+
             # Remove "Vintage" and "Postcard" if present
-            cancel_words = [word for word in cancel_words if word not in ["Vintage", "Postcard"]]
+            cancel_words = [word for word in cancel_words if word not in ["Vintage", "Postcard", "Antique"]]
+
+            # Remove duplicate words past the first mention
+            seen_words = set()
+            unique_cancel_words = []
+            for word in cancel_words:
+                if word not in seen_words:
+                    unique_cancel_words.append(word)
+                    seen_words.add(word)
+
             # Truncate from the beginning until the title is under 80 characters
-            while len(' '.join(cancel_words)) >= 80 and cancel_words:
-                cancel_words.pop(0)
-            cancel_title = ' '.join(cancel_words) if len(' '.join(cancel_words)) < 80 else ""
+            while len(' '.join(unique_cancel_words)) >= 80 and unique_cancel_words:
+                unique_cancel_words.pop(0)
+
+            cancel_title = ' '.join(unique_cancel_words) if len(' '.join(unique_cancel_words)) < 80 else ""
 
         # Step 3: Truncate destination_title if it exceeds 80 characters
         if len(destination_title) >= 80:
             destination_words = destination_title.split()
             # Remove "Vintage" and "Postcard" if present
-            destination_words = [word for word in destination_words if word not in ["Vintage", "Postcard"]]
+            destination_words = [word for word in destination_words if word not in ["Vintage", "Postcard", "Antique"]]
             # Truncate from the beginning until the title is under 80 characters
             while len(' '.join(destination_words)) >= 80 and destination_words:
                 destination_words.pop(0)
@@ -204,11 +223,12 @@ PS - WE BUY POSTCARDS! Top prices paid for good collections.
             sku_prefix = 'NOSKU'  # Default SKU prefix if no match is found
             print("No SKU Prefix found, using default: NOSKU")  # For debugging purposes
         # Generate SKU
-        SKU = f'{sku_prefix}_{counter:02d}'
+        # SKU = f'{sku_prefix}_{counter:02d}'
+        SKU = f'{sku_prefix}'
         # Increment counter
         counter += 1
         # For debugging purposes, print SKU
-        print("Generated SKU:", SKU)
+        # print("Generated SKU:", SKU)
 
         row = {
             "original_index": postcard["original_index"],  # Include original index
@@ -250,6 +270,8 @@ import pandas as pd
 
 # Function to clean and normalize text
 def clean_text(text):
+    if pd.isnull(text):
+        return ''
     # Normalize the text to decompose accents
     text = unicodedata.normalize('NFKD', str(text))
     # Remove any non-Latin characters
@@ -332,8 +354,6 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
     4. **City**: Identify the city or major landmark mentioned on the postcard.
     5. **Era**: You must identify the proper era of the card from these choices: Undivided Back (1901-1907), Divided Back (1907-1915), White Border (1915-1930), Linen (1930-1945), Photochrome (1945-now). You can only choose from those.
     6. **Description** Write a short, descriptive, and non-flowery description of the card, preferably including details that aren't necessarily found in the title, containing elements such as (e.g., "written from a mother to a son" "references to farming" "reference to WWI" "a child's handwriting"). You must also definitively state where the card was sent, the recipients name, address, town, and state/country in the description. 
-    7. **Destination City** If available, write the destination city and the state, no comma eg Billings MT
-    8. **Origin City** If available, write the origin city, ONLY THE CITY.
 
 
     Please output the result in the following structure, and NOTHING else:
@@ -346,9 +366,7 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
         "City": "Savannah",
         "Era": "Photochrome (1945-now)",
         "Description": "Features a scenic highway lined with palms and oleanders, likely promoting beach tourism. 
-        Sent postmarked from Savannah, with a brief note about a family road trip.",
-        "Destination City": "Tallahassee TN",
-        "Origin City": "Aaron"
+        Sent postmarked from Savannah, with a brief note about a family road trip."
     }
 
     Another Example:
@@ -358,9 +376,7 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
         "Country": "USA",
         "City": "Yellowstone",
         "Description": "Shows Gibbon Falls, part of a Haynes collection of early park photography. Likely from a 
-        traveler describing natural wonders, with references to early park infrastructure.",
-        "Destination City": "Billings MT",
-        "Origin City": "Cheyenne"
+        traveler describing natural wonders, with references to early park infrastructure."
     }
 
     Another Example:
@@ -371,9 +387,7 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
         "City": "St. Petersburg",
         "Era": "Divided Back (1907-1915)",
         "Description": "Depicts fishermen at John's Pass Bridge, a popular tourist and fishing spot. Postcard 
-        mentions a family vacation, with references to warm weather and abundant fishing.",
-        "Destination City": "Boston IL",
-        "Origin City": "Chicago"
+        mentions a family vacation, with references to warm weather and abundant fishing."
     }
 
     Another Example:
@@ -384,9 +398,7 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
         "City": "Newport News",
         "Era": "Photochrome (1945-now)",
         "Description": "Features a museum display, likely sent from a visitor to Newport News. Includes mention of 
-        shipbuilding history, with a personal note about travel to Milwaukee.",
-        "Destination City": "Billings MT",
-        "Origin City": "Newport News"
+        shipbuilding history, with a personal note about travel to Milwaukee."
     }
 
     Another Example:
@@ -396,9 +408,7 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
         "Country": "USA",
         "City": "Memphis",
         "Era": "Linen (1930-1945)",
-        "Description": "Displays a staged romantic scene of two figures in a cotton field. Likely includes commentary on Southern agriculture or nostalgia, with dated cultural imagery.",
-        "Destination City": "Bozeman MT",
-        "Origin City": "Memphis"
+        "Description": "Displays a staged romantic scene of two figures in a cotton field. Likely includes commentary on Southern agriculture or nostalgia, with dated cultural imagery."
     }
 
     If any of the information cannot be found on the postcard, please output just '' for that field.
@@ -414,9 +424,111 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
 
     Never output any sort of formatting block, i.e. ```json just output the raw string.
 
-    Try to max out the 90 character limit in the title field, keyword stuff if you must. 
+    Try to max out the 70 character limit in the title field, keyword stuff if you must. Never repeat the city or any words within the title ever. 
 
     Make sure to carefully analyze the **text on the back** of the postcard as well, since it may contain valuable information like the city, region, or country.
+    """
+
+    payload = {
+        "model": "gpt-4o-2024-08-06",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": prompt
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{front_image_base64}",
+                            "detail": "high"
+                        }
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{back_image_base64}",
+                            "detail": "high"
+                        }
+                    }
+                ]
+            }
+        ],
+        "max_tokens": 300,
+        # "type": "json_object"
+    }
+
+    response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
+    response_json = response.json()
+    details = response_json['choices'][0]['message'][
+        'content'] if 'choices' in response_json else "Details not available"
+    return details
+
+
+# Function to get postcard details using the API
+def get_secondary_postcard_details(api_key, front_image_path, back_image_path):
+    front_image_base64 = encode_image(front_image_path)
+    back_image_base64 = encode_image(back_image_path)
+
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
+
+    prompt = """
+    You are given two images of a vintage or antique postcard:
+
+    1. The first image is the **front** of the postcard.
+    2. The second image is the **back** of the postcard, which contains text and possibly other relevant details.
+
+    I need you to analyze both the front and back images and provide the following information:
+
+    1. **Origin City** If available, write the origin city, ONLY THE CITY. This is found within the circular black postage stamp.
+    This is known as the cancel of the card. This is often written in circular text around the stamp. 
+    
+    2. **Destination City** If available, write the destination city and the state, no comma eg Billings MT. This will likely be written on the card in handwriting. 
+
+    Please output the result in the following structure, and NOTHING else:
+
+    Example Output:
+    {
+        "Destination City": "Tallahassee TN",
+        "Origin City": "Aaron"
+    }
+
+    Another Example:
+    {
+        "Destination City": "Billings MT",
+        "Origin City": "Cheyenne"
+    }
+
+    Another Example:
+    {
+        "Destination City": "Boston IL",
+        "Origin City": "Chicago"
+    }
+
+    Another Example:
+    {
+        "Destination City": "Billings MT",
+        "Origin City": "Newport News"
+    }
+
+    Another Example:
+    {
+        "Destination City": "Bozeman MT",
+        "Origin City": "Memphis"
+    }
+
+    If any of the information cannot be found on the postcard, please output just '' for that field.
+
+    Never ever shorten a city name, ie never do New York -> NY. 
+
+    Never output any sort of formatting block, i.e. ```json just output the raw string.
+
+    Make sure to carefully analyze the **text on the back** of the postcard as well, since it may contain valuable information.
     """
 
     payload = {
@@ -467,6 +579,18 @@ def process_batch(api_key, batch):
         original_index = postcard["original_index"]
 
         postcard_details = get_postcard_details(api_key, front_image_path, back_image_path)
+        secondary_postcard_details = get_secondary_postcard_details(api_key, front_image_path, back_image_path)
+
+        # Convert JSON strings to dictionaries
+        postcard_details = json.loads(postcard_details)
+        secondary_postcard_details = json.loads(secondary_postcard_details)
+
+        # Merge the dictionaries
+        postcard_details.update(secondary_postcard_details)
+
+        # Convert the merged dictionary back to a JSON string
+        postcard_details = json.dumps(postcard_details)
+
         postcards_details.append({
             "original_index": original_index,
             "front_image": postcard["front_image_filename"],
@@ -573,6 +697,8 @@ def main():
 
                     # Apply the cleaning function only to columns 4-8 in the copy
                     df_cleaned.loc[:, df.columns[4:9]] = df_cleaned.loc[:, df.columns[4:9]].applymap(clean_text)
+
+                    df_cleaned = df_cleaned.fillna('')
 
                     # Save the cleaned data to a new CSV file
                     df_cleaned.to_csv('cleaned_file.csv', index=False)
