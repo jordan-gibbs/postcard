@@ -103,7 +103,7 @@ def remove_code_from_url(url):
     return re.sub(r'(archives/)[^/]+/', r'\1', url)
 
 def save_postcards_to_csv(postcards_details, first_column_set):
-    headers = ["front_image_link", "back_image_link", "SKU", "Title", "Cancel Title", "Destination Title", "Region",
+    headers = ["front_image_link", "back_image_link", "SKU", "Title", "Destination Title", "Region",
                "Country", "City",
                "Era",
                "Description"]
@@ -169,7 +169,7 @@ PS - WE BUY POSTCARDS! Top prices paid for good collections.
         else:
             cancel_title = ""
 
-        if destination is not "":
+        if destination != "":
             destination_title = f"{cleaned_title} to {destination}"
         else:
             destination_title = ""
@@ -181,13 +181,14 @@ PS - WE BUY POSTCARDS! Top prices paid for good collections.
             # Remove "Vintage" and "Postcard" if present
             cancel_words = [word for word in cancel_words if word not in ["Vintage", "Postcard", "Antique"]]
 
-            # Remove duplicate words past the first mention
+            # Remove duplicate words past the first mention, case-insensitively
             seen_words = set()
             unique_cancel_words = []
             for word in cancel_words:
-                if word not in seen_words:
-                    unique_cancel_words.append(word)
-                    seen_words.add(word)
+                lower_word = word.lower()  # Convert word to lowercase for comparison
+                if lower_word not in seen_words:
+                    unique_cancel_words.append(word)  # Keep the original casing
+                    seen_words.add(lower_word)
 
             # Truncate from the beginning until the title is under 80 characters
             while len(' '.join(unique_cancel_words)) >= 80 and unique_cancel_words:
@@ -204,6 +205,9 @@ PS - WE BUY POSTCARDS! Top prices paid for good collections.
             while len(' '.join(destination_words)) >= 80 and destination_words:
                 destination_words.pop(0)
             destination_title = ' '.join(destination_words) if len(' '.join(destination_words)) < 80 else ""
+
+        if cancel_title != "":
+            cleaned_title = cancel_title
 
         # Results
         print("Cancel Title:", cancel_title)
@@ -236,7 +240,7 @@ PS - WE BUY POSTCARDS! Top prices paid for good collections.
             "back_image_link": back_image_link,
             "SKU": SKU,
             "Title": cleaned_title,
-            "Cancel Title": cancel_title,
+            # "Cancel Title": cancel_title,
             "Destination Title": destination_title,
             "Region": details.get("Region", ""),
             "Country": details.get("Country", ""),
@@ -696,7 +700,7 @@ def main():
                     df_cleaned = df.copy()
 
                     # Apply the cleaning function only to columns 4-8 in the copy
-                    df_cleaned.loc[:, df.columns[4:9]] = df_cleaned.loc[:, df.columns[4:9]].applymap(clean_text)
+                    df_cleaned.loc[:, df.columns[4:8]] = df_cleaned.loc[:, df.columns[4:8]].applymap(clean_text)
 
                     df_cleaned = df_cleaned.fillna('')
 
