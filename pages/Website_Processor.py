@@ -573,7 +573,7 @@ def analyze_row_with_ai(row, headers):
         """
 
     response = client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-4o-2024-08-06",
         temperature=0,
         messages=[
             {"role": "system", "content": prompt},
@@ -694,15 +694,37 @@ def main():
                     import unicodedata
                     import re
                     import pandas as pd
+                    import html
 
                     # Function to clean and normalize text
                     def clean_text(text):
+                        if pd.isnull(text):
+                            return ''
+
+                        # Define a dictionary of common alternate characters to replace
+                        replacements = {
+                            '‘': "'", '’': "'", '“': '"', '”': '"', '–': '-', '—': '-',
+                            '…': '...', '«': '"', '»': '"', '‹': "'", '›': "'"
+                        }
+
                         # Normalize the text to decompose accents
                         text = unicodedata.normalize('NFKD', str(text))
+
+                        # Replace any alternate characters with their standard ASCII equivalents
+                        for alt_char, standard_char in replacements.items():
+                            text = text.replace(alt_char, standard_char)
+
                         # Remove any non-Latin characters
                         text = ''.join([c for c in text if unicodedata.category(c) != 'Mn'])
+
                         # Remove unwanted symbols, keeping basic punctuation and alphanumeric characters
-                        text = re.sub(r'[^A-Za-z0-9\s.,?!\'"<>-_]', '', text)
+                        text = re.sub(r'[^A-Za-z0-9\s.,?!\'"<>-_]', ' ', text)
+
+                        # Decode HTML entities like &amp; to their actual characters
+                        text = html.unescape(text)
+
+                        text = re.sub(' +', ' ', text)
+
                         return text
 
                     df = pd.read_csv(csv_file)
