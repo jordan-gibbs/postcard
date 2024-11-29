@@ -11,6 +11,7 @@ import re
 import json
 import numpy as np
 import html
+import time
 
 
 def clean_title(title, city):
@@ -288,6 +289,10 @@ def clean_text(text):
     # Normalize the text to decompose accents
     text = unicodedata.normalize('NFKD', str(text))
 
+
+    # Decode HTML entities like &amp; to their actual characters
+    text = html.unescape(text)
+
     # Replace any alternate characters with their standard ASCII equivalents
     for alt_char, standard_char in replacements.items():
         text = text.replace(alt_char, standard_char)
@@ -296,10 +301,8 @@ def clean_text(text):
     text = ''.join([c for c in text if unicodedata.category(c) != 'Mn'])
 
     # Remove unwanted symbols, keeping basic punctuation and alphanumeric characters
-    text = re.sub(r'[^A-Za-z0-9\s.,?!\'"<>-_]', '', text)
+    text = re.sub(r'[^A-Za-z0-9\s.,?!\'"<>-_/]', '', text)
 
-    # Decode HTML entities like &amp; to their actual characters
-    text = html.unescape(text)
 
     return text
 
@@ -309,13 +312,22 @@ def encode_image(image_path):
     with open(image_path, "rb") as image_file:
         return base64.b64encode(image_file.read()).decode("utf-8")
 
+import threading
 
 def download_images_from_links(links, tmp_dir):
     postcards = []
-    # Process links in pairs (front and back)
-    for idx in range(0, len(links), 2):
+    total_links = len(links)
+    progress_text = "Downloading images. Please wait."
+    my_bar = st.progress(0, text=progress_text)
+
+    # Lock for thread-safe updates
+    progress_lock = threading.Lock()
+    postcards_lock = threading.Lock()
+    downloaded_count = 0
+
+    def download_pair(idx):
+        nonlocal downloaded_count
         try:
-            # Download front image
             front_link = links[idx]
             front_response = requests.get(front_link)
             front_response.raise_for_status()
@@ -325,6 +337,9 @@ def download_images_from_links(links, tmp_dir):
                 f.write(front_response.content)
 
             # Download back image if available
+            back_link = None
+            back_image_filename = None
+            back_image_path = None
             if idx + 1 < len(links):
                 back_link = links[idx + 1]
                 back_response = requests.get(back_link)
@@ -333,24 +348,38 @@ def download_images_from_links(links, tmp_dir):
                 back_image_path = os.path.join(tmp_dir, back_image_filename)
                 with open(back_image_path, "wb") as f:
                     f.write(back_response.content)
-            else:
-                back_link = None
-                back_image_filename = None
-                back_image_path = None
 
-            postcards.append({
-                "original_index": idx // 2,
-                "front_image_filename": front_image_filename,
-                "back_image_filename": back_image_filename,
-                "front_image_path": front_image_path,
-                "back_image_path": back_image_path,
-                "front_image_link": front_link,
-                "back_image_link": back_link
-            })
+            with postcards_lock:
+                postcards.append({
+                    "original_index": idx // 2,
+                    "front_image_filename": front_image_filename,
+                    "back_image_filename": back_image_filename,
+                    "front_image_path": front_image_path,
+                    "back_image_path": back_image_path,
+                    "front_image_link": front_link,
+                    "back_image_link": back_link
+                })
+
         except Exception as e:
             print(f"Failed to download images at index {idx}: {e}")
-    return postcards
+        finally:
+            with progress_lock:
+                downloaded_count += 2  # Assuming pairs
+                progress_percentage = downloaded_count / total_links
+                my_bar.progress(progress_percentage, text=f"{progress_text} ({int(progress_percentage * 100)}%)")
 
+    # Use ThreadPoolExecutor to download images concurrently
+    max_workers = min(20, (len(links) + 1) // 2)  # Adjust the number of workers as needed
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        for idx in range(0, total_links, 2):
+            executor.submit(download_pair, idx)
+
+    # Ensure progress bar is complete
+    my_bar.progress(1.0, text="Download complete!")
+    time.sleep(1)
+    my_bar.empty()
+
+    return postcards
 
 
 # Function to get postcard details using the API
@@ -384,6 +413,7 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
     Example Output:
     {
         "Title": "Vintage Georgia Postcard SAVANNAH Beach Highway 1983",
+        "shortTitle": "Vintage Georgia Postcard SAVANNAH Beach 1983",
         "Region": "Georgia",
         "Country": "USA",
         "City": "Savannah",
@@ -395,6 +425,7 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
     Another Example:
     {
         "Title": "Antique Wyoming Postcard YELLOWSTONE National Park Gibbon Falls 1913",
+        "shortTitle": "Antique Wyoming Postcard YELLOWSTONE Gibbon Falls 1913",
         "Region": "Wyoming",
         "Country": "USA",
         "City": "Yellowstone",
@@ -405,6 +436,7 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
     Another Example:
     {
         "Title": "Antique Florida Postcard ST. PETERSBURG John's Pass Bridge 1957",
+        "shortTitle": "Antique Florida Postcard ST. PETERSBURG John's Pass 1957",
         "Region": "Florida",
         "Country": "USA",
         "City": "St. Petersburg",
@@ -416,6 +448,7 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
     Another Example:
     {
         "Title": "Vintage Virginia Postcard NEWPORT NEWS Mariner's Museum 1999",
+        "shortTitle": "Vintage Virginia Postcard NEWPORT NEWS 1999",
         "Region": "Virginia",
         "Country": "USA",
         "City": "Newport News",
@@ -427,6 +460,7 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
     Another Example:
     {
         "Title": "Vintage Tennessee Postcard MEMPHIS Romeo & Juliet in Cotton Field 1938",
+        "shortTitle": "Vintage Tennessee Postcard MEMPHIS Cotton Field 1938",
         "Region": "Tennessee",
         "Country": "USA",
         "City": "Memphis",
@@ -448,7 +482,7 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
     Never output any sort of formatting block, i.e. ```json just output the raw string.
 
     Try to max out the 70 character limit in the title field, keyword stuff if you must. Never repeat the city or any words within the title ever. 
-
+    The short title can be creatively made, using same formatting guidelines, just make sure it is 1-2 words shorter than the actual first title you wrote.
     Make sure to carefully analyze the **text on the back** of the postcard as well, since it may contain valuable information like the city, region, or country.
     """
 
@@ -487,6 +521,7 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
     response_json = response.json()
     details = response_json['choices'][0]['message'][
         'content'] if 'choices' in response_json else "Details not available"
+    print(details)
     return details
 
 
@@ -546,6 +581,8 @@ def get_secondary_postcard_details(api_key, front_image_path, back_image_path):
     }
 
     If any of the information cannot be found on the postcard, please output just '' for that field.
+    
+    YOU MUST USE THE STATE SHORTCODE FOR THE DESTINATION CITY, I.E., MT, IL, HI, ETC. IF YOU OUTPUT THE ACTUAL FULL STATE NAME, YOU HAVE FAILED YOUR TASK.
 
     Never ever shorten a city name, ie never do New York -> NY. 
 
@@ -589,6 +626,7 @@ def get_secondary_postcard_details(api_key, front_image_path, back_image_path):
     response_json = response.json()
     details = response_json['choices'][0]['message'][
         'content'] if 'choices' in response_json else "Details not available"
+    print(f"Destination and Cancel Details: {details}")
     return details
 
 
@@ -631,10 +669,14 @@ def get_image_index(filename):
     return int(m.group(1)) if m else -1
 
 
-def process_postcards_in_folder(api_key, postcards, workers=10):
+def process_postcards_in_folder(api_key, postcards, workers=20):
     total_postcards = len(postcards)
     if total_postcards == 0:
         raise ValueError("No postcards to process.")
+
+    # Initialize progress bar
+    progress_text = "Processing postcards. Please wait."
+    my_bar = st.progress(0, text=progress_text)
 
     # Split postcards into batches
     batch_size = max(1, total_postcards // workers)
@@ -642,6 +684,9 @@ def process_postcards_in_folder(api_key, postcards, workers=10):
 
     postcards_details = []
     failed_batches = []
+
+    total_batches = len(postcard_batches)
+    completed_batches = 0
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {
@@ -656,6 +701,12 @@ def process_postcards_in_folder(api_key, postcards, workers=10):
             except Exception as exc:
                 print(f"Batch {batch_idx} generated an exception: {exc}")
                 failed_batches.append(batch_idx)
+            finally:
+                # Update progress bar for each completed batch
+                completed_batches += 1
+                progress_value = completed_batches / total_batches  # Normalize to 0.0 - 1.0
+                # st.success("Batch Completed!")
+                my_bar.progress(progress_value, text=f"{progress_text} ({int(progress_value * 100)}%)")
 
     # Re-run failed batches if any
     if failed_batches:
@@ -664,8 +715,17 @@ def process_postcards_in_folder(api_key, postcards, workers=10):
             try:
                 result = process_batch(api_key, batch)
                 postcards_details.extend(result)
+                # Update progress for retried batches
+                completed_batches += 1
+                progress_value = completed_batches / total_batches  # Normalize to 0.0 - 1.0
+                my_bar.progress(progress_value, text=f"{progress_text} ({int(progress_value * 100)}%)")
             except Exception as exc:
                 print(f"Batch {batch_idx} failed again: {exc}")
+
+    # Mark progress as complete
+    my_bar.progress(1.0, text="Processing complete!")
+    time.sleep(1)
+    my_bar.empty()
 
     # Sort postcards by original index
     postcards_details = sorted(postcards_details, key=lambda x: x["original_index"])
@@ -718,8 +778,8 @@ def main():
                     # Create a copy of the original DataFrame to store the cleaned data
                     df_cleaned = df.copy()
 
-                    # Apply the cleaning function only to columns 4-8 in the copy
-                    df_cleaned.loc[:, df.columns[4:8]] = df_cleaned.loc[:, df.columns[4:8]].applymap(clean_text)
+                    columns_to_clean = [col for i, col in enumerate(df_cleaned.columns[4:10]) if i + 4 != 8]
+                    df_cleaned.loc[:, columns_to_clean] = df_cleaned.loc[:, columns_to_clean].applymap(clean_text)
 
                     df_cleaned = df_cleaned.fillna('')
 
