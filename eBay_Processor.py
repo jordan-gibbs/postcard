@@ -104,7 +104,7 @@ def remove_code_from_url(url):
     return re.sub(r'(archives/)[^/]+/', r'\1', url)
 
 def save_postcards_to_csv(postcards_details, first_column_set):
-    headers = ["front_image_link", "back_image_link", "SKU", "Title", "Destination Title", "Region",
+    headers = ["front_image_link", "back_image_link", "SKU", "Title", "Destination Title", "Combo Title", "Region",
                "Country", "City",
                "Era",
                "Description"]
@@ -235,6 +235,8 @@ PS - WE BUY POSTCARDS! Top prices paid for good collections.
         # For debugging purposes, print SKU
         # print("Generated SKU:", SKU)
 
+        combo_title = destination_title if destination_title else cleaned_title
+
         row = {
             "original_index": postcard["original_index"],  # Include original index
             "front_image_link": front_image_link,
@@ -243,6 +245,7 @@ PS - WE BUY POSTCARDS! Top prices paid for good collections.
             "Title": cleaned_title,
             # "Cancel Title": cancel_title,
             "Destination Title": destination_title,
+            "Combo Title": combo_title,
             "Region": details.get("Region", ""),
             "Country": details.get("Country", ""),
             "City": details.get("City", ""),
@@ -301,7 +304,7 @@ def clean_text(text):
     text = ''.join([c for c in text if unicodedata.category(c) != 'Mn'])
 
     # Remove unwanted symbols, keeping basic punctuation and alphanumeric characters
-    text = re.sub(r'[^A-Za-z0-9\s.,?!\'"<>-_/]', '', text)
+    text = re.sub(r'[^A-Za-z0-9\s.,?!\'"()%<>-_/]', '', text)
 
 
     return text
@@ -735,6 +738,11 @@ def process_postcards_in_folder(api_key, postcards, workers=20):
 
 
 def main():
+
+    if "links" not in st.session_state:
+        st.session_state.links = None
+
+
     st.set_page_config(
         page_title="eBay Processor",
         page_icon="🖼",  # You can choose any emoji as the icon
@@ -752,9 +760,13 @@ def main():
 
     api_key = os.getenv("OPENAI_API_KEY")
     links_input = st.text_area("Paste image URLs (one per line)")
-    links = [link for link in links_input.splitlines() if link.strip()] if links_input else []
+    if links_input:
+        links = [link for link in links_input.splitlines() if link.strip()] if links_input else []
+        st.session_state.links = links
+    else:
+        pass
 
-    if links:
+    if st.session_state.links:
         if "csv_data1" not in st.session_state:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 # Download and save images from the links
@@ -778,7 +790,7 @@ def main():
                     # Create a copy of the original DataFrame to store the cleaned data
                     df_cleaned = df.copy()
 
-                    columns_to_clean = [col for i, col in enumerate(df_cleaned.columns[4:10]) if i + 4 != 8]
+                    columns_to_clean = [col for i, col in enumerate(df_cleaned.columns[4:11]) if i + 4 != 9]
                     df_cleaned.loc[:, columns_to_clean] = df_cleaned.loc[:, columns_to_clean].applymap(clean_text)
 
                     df_cleaned = df_cleaned.fillna('')
@@ -790,13 +802,19 @@ def main():
                     with open('cleaned_file.csv', "rb") as f:
                         st.session_state.csv_data1 = f.read()
 
-        # Create the download button, using stored CSV data
-        st.download_button(
-            label="Download CSV",
-            data=st.session_state.csv_data1,
-            file_name="postcards.csv",
-            mime="text/csv"
-        )
+        if st.session_state.csv_data1:
+            # Create the download button, using stored CSV data
+            if st.download_button(
+                label="Download CSV",
+                data=st.session_state.csv_data1,
+                file_name="postcards.csv",
+                mime="text/csv"
+            ):
+                st.session_state.links = None
+                st.session_state.csv_data1 = None
+                st.rerun()
+            else:
+                pass
 
 
 if __name__ == "__main__":
