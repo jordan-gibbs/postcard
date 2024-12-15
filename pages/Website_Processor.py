@@ -500,7 +500,7 @@ def process_batch(api_key, batch, retries=3):
 
 
 # Updated process_postcards_in_folder function
-def process_postcards_in_folder(api_key, postcards, workers=10, retries=3):
+def process_postcards_in_folder(api_key, postcards, workers=100, retries=3):
     total_postcards = len(postcards)
     if total_postcards == 0:
         raise ValueError("No postcards to process.")
