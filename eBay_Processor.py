@@ -775,7 +775,7 @@ def main():
 
                 with st.spinner("Processing images..."):
                     # Process postcards using workers
-                    postcards_details = process_postcards_in_folder(api_key, postcards, workers=10)
+                    postcards_details = process_postcards_in_folder(api_key, postcards, workers=100)
                     st.write("Processing complete!")
 
                     # Save the results to a CSV file
