@@ -7,6 +7,7 @@ import requests
 import csv
 import math
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import concurrent.futures
 import re
 import json
 import numpy as np
@@ -384,9 +385,273 @@ def download_images_from_links(links, tmp_dir):
 
     return postcards
 
+#
+# # Function to get postcard details using the API
+# def get_postcard_details(api_key, front_image_path, back_image_path):
+#     front_image_base64 = encode_image(front_image_path)
+#     back_image_base64 = encode_image(back_image_path)
+#
+#     headers = {
+#         "Content-Type": "application/json",
+#         "Authorization": f"Bearer {api_key}"
+#     }
+#
+#     prompt = """
+#     You are given two images of a vintage or antique postcard:
+#
+#     1. The first image is the **front** of the postcard.
+#     2. The second image is the **back** of the postcard, which contains text and possibly other relevant details.
+#
+#     I need you to analyze both the front and back images and provide the following information:
+#
+#     1. **Title**: Create a descriptive title for the postcard based on the front and back. The title should be **70 characters or less**.
+#     2. **Region**: Identify the U.S. state or region mentioned in the postcard.
+#     3. **Country**: Identify the country mentioned on the postcard.
+#     4. **City**: Identify the city or major landmark mentioned on the postcard.
+#     5. **Era**: You must identify the proper era of the card from these choices: Undivided Back (1901-1907), Divided Back (1907-1915), White Border (1915-1930), Linen (1930-1945), Photochrome (1945-now). You can only choose from those.
+#     6. **Description** Write a short, descriptive, and non-flowery description of the card, preferably including details that aren't necessarily found in the title, containing elements such as (e.g., "written from a mother to a son" "references to farming" "reference to WWI" "a child's handwriting"). You must also definitively state where the card was sent, the recipients name, address, town, and state/country in the description.
+#
+#
+#     Please output the result in the following structure, and NOTHING else:
+#
+#     Example Output:
+#     {
+#         "Title": "Vintage Georgia Postcard SAVANNAH Beach Highway 1983",
+#         "shortTitle": "Vintage Georgia Postcard SAVANNAH Beach 1983",
+#         "Region": "Georgia",
+#         "Country": "USA",
+#         "City": "Savannah",
+#         "Era": "Photochrome (1945-now)",
+#         "Description": "Features a scenic highway lined with palms and oleanders, likely promoting beach tourism.
+#         Sent postmarked from Savannah, with a brief note about a family road trip."
+#     }
+#
+#     Another Example:
+#     {
+#         "Title": "Antique Wyoming Postcard YELLOWSTONE National Park Gibbon Falls 1913",
+#         "shortTitle": "Antique Wyoming Postcard YELLOWSTONE Gibbon Falls 1913",
+#         "Region": "Wyoming",
+#         "Country": "USA",
+#         "City": "Yellowstone",
+#         "Description": "Shows Gibbon Falls, part of a Haynes collection of early park photography. Likely from a
+#         traveler describing natural wonders, with references to early park infrastructure."
+#     }
+#
+#     Another Example:
+#     {
+#         "Title": "Antique Florida Postcard ST. PETERSBURG John's Pass Bridge 1957",
+#         "shortTitle": "Antique Florida Postcard ST. PETERSBURG John's Pass 1957",
+#         "Region": "Florida",
+#         "Country": "USA",
+#         "City": "St. Petersburg",
+#         "Era": "Divided Back (1907-1915)",
+#         "Description": "Depicts fishermen at John's Pass Bridge, a popular tourist and fishing spot. Postcard
+#         mentions a family vacation, with references to warm weather and abundant fishing."
+#     }
+#
+#     Another Example:
+#     {
+#         "Title": "Vintage Virginia Postcard NEWPORT NEWS Mariner's Museum 1999",
+#         "shortTitle": "Vintage Virginia Postcard NEWPORT NEWS 1999",
+#         "Region": "Virginia",
+#         "Country": "USA",
+#         "City": "Newport News",
+#         "Era": "Photochrome (1945-now)",
+#         "Description": "Features a museum display, likely sent from a visitor to Newport News. Includes mention of
+#         shipbuilding history, with a personal note about travel to Milwaukee."
+#     }
+#
+#     Another Example:
+#     {
+#         "Title": "Vintage Tennessee Postcard MEMPHIS Romeo & Juliet in Cotton Field 1938",
+#         "shortTitle": "Vintage Tennessee Postcard MEMPHIS Cotton Field 1938",
+#         "Region": "Tennessee",
+#         "Country": "USA",
+#         "City": "Memphis",
+#         "Era": "Linen (1930-1945)",
+#         "Description": "Displays a staged romantic scene of two figures in a cotton field. Likely includes commentary on Southern agriculture or nostalgia, with dated cultural imagery."
+#     }
+#
+#     If any of the information cannot be found on the postcard, please output just '' for that field.
+#
+#     Always try to put the year in if available.
+#
+#     Never ever shorten a city name, ie never do New York -> NY.
+#
+#     Always put the city in all caps in the title field, i.e. 'BOSTON' but never put it in all caps in the City Field.
+#     Never put the attraction itself in all caps, ONLY the city.
+#
+#     Never output any commas within the title.
+#
+#     Never output any sort of formatting block, i.e. ```json just output the raw string.
+#
+#     Try to max out the 70 character limit in the title field, keyword stuff if you must. Never repeat the city or any words within the title ever.
+#     The short title can be creatively made, using same formatting guidelines, just make sure it is 1-2 words shorter than the actual first title you wrote.
+#     Make sure to carefully analyze the **text on the back** of the postcard as well, since it may contain valuable information like the city, region, or country.
+#     """
+#
+#     payload = {
+#         "model": "gpt-4o-2024-08-06",
+#         "messages": [
+#             {
+#                 "role": "user",
+#                 "content": [
+#                     {
+#                         "type": "text",
+#                         "text": prompt
+#                     },
+#                     {
+#                         "type": "image_url",
+#                         "image_url": {
+#                             "url": f"data:image/jpeg;base64,{front_image_base64}",
+#                             "detail": "high"
+#                         }
+#                     },
+#                     {
+#                         "type": "image_url",
+#                         "image_url": {
+#                             "url": f"data:image/jpeg;base64,{back_image_base64}",
+#                             "detail": "high"
+#                         }
+#                     }
+#                 ]
+#             }
+#         ],
+#         "max_tokens": 300,
+#         # "type": "json_object"
+#     }
+#
+#     response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
+#     response_json = response.json()
+#     details = response_json['choices'][0]['message'][
+#         'content'] if 'choices' in response_json else "Details not available"
+#     print(details)
+#     return details
+#
+#
+# # Function to get postcard details using the API
+# def get_secondary_postcard_details(api_key, front_image_path, back_image_path):
+#     front_image_base64 = encode_image(front_image_path)
+#     back_image_base64 = encode_image(back_image_path)
+#
+#     headers = {
+#         "Content-Type": "application/json",
+#         "Authorization": f"Bearer {api_key}"
+#     }
+#
+#     prompt = """
+#     You are given two images of a vintage or antique postcard:
+#
+#     1. The first image is the **front** of the postcard.
+#     2. The second image is the **back** of the postcard, which contains text and possibly other relevant details.
+#
+#     I need you to analyze both the front and back images and provide the following information:
+#
+#     1. **Origin City** If available, write the origin city, ONLY THE CITY. This is found within the circular black postage stamp.
+#     This is known as the cancel of the card. This is often written in circular text around the stamp.
+#
+#     2. **Destination City** If available, write the destination city and the state, no comma eg Billings MT. This will likely be written on the card in handwriting.
+#
+#     Please output the result in the following structure, and NOTHING else:
+#
+#     Example Output:
+#     {
+#         "Destination City": "Tallahassee TN",
+#         "Origin City": "Aaron"
+#     }
+#
+#     Another Example:
+#     {
+#         "Destination City": "Billings MT",
+#         "Origin City": "Cheyenne"
+#     }
+#
+#     Another Example:
+#     {
+#         "Destination City": "Boston IL",
+#         "Origin City": "Chicago"
+#     }
+#
+#     Another Example:
+#     {
+#         "Destination City": "Billings MT",
+#         "Origin City": "Newport News"
+#     }
+#
+#     Another Example:
+#     {
+#         "Destination City": "Bozeman MT",
+#         "Origin City": "Memphis"
+#     }
+#
+#     If any of the information cannot be found on the postcard, please output just '' for that field.
+#
+#     YOU MUST USE THE STATE SHORTCODE FOR THE DESTINATION CITY, I.E., MT, IL, HI, ETC. IF YOU OUTPUT THE ACTUAL FULL STATE NAME, YOU HAVE FAILED YOUR TASK.
+#
+#     Never ever shorten a city name, ie never do New York -> NY.
+#
+#     Never output any sort of formatting block, i.e. ```json just output the raw string.
+#
+#     Make sure to carefully analyze the **text on the back** of the postcard as well, since it may contain valuable information.
+#     """
+#
+#     payload = {
+#         "model": "gpt-4o-2024-08-06",
+#         "messages": [
+#             {
+#                 "role": "user",
+#                 "content": [
+#                     {
+#                         "type": "text",
+#                         "text": prompt
+#                     },
+#                     {
+#                         "type": "image_url",
+#                         "image_url": {
+#                             "url": f"data:image/jpeg;base64,{front_image_base64}",
+#                             "detail": "high"
+#                         }
+#                     },
+#                     {
+#                         "type": "image_url",
+#                         "image_url": {
+#                             "url": f"data:image/jpeg;base64,{back_image_base64}",
+#                             "detail": "high"
+#                         }
+#                     }
+#                 ]
+#             }
+#         ],
+#         "max_tokens": 300,
+#         # "type": "json_object"
+#     }
+#
+#     response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
+#     response_json = response.json()
+#     details = response_json['choices'][0]['message'][
+#         'content'] if 'choices' in response_json else "Details not available"
+#     print(f"Destination and Cancel Details: {details}")
+#     return details
 
-# Function to get postcard details using the API
-def get_postcard_details(api_key, front_image_path, back_image_path):
+
+def get_postcard_details(api_key, front_image_path, back_image_path, timeout=20, max_workers=100):
+    """Get postcard details with timeout and parallel processing."""
+
+    def api_call():
+        return _get_postcard_details_helper(api_key, front_image_path, back_image_path)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future = executor.submit(api_call)  # Submit the API call to the thread pool
+        try:
+            result = future.result(timeout=timeout)  # Wait with a timeout
+            return result
+        except concurrent.futures.TimeoutError:
+            print(f"Timeout occurred in get_postcard_details, skipping call")
+            return '{"Title": "", "Region": "", "Country": "", "City": "", "Era": "", "Description": ""}'
+
+
+def _get_postcard_details_helper(api_key, front_image_path, back_image_path):
+    """Helper function to do the actual API call."""
     front_image_base64 = encode_image(front_image_path)
     back_image_base64 = encode_image(back_image_path)
 
@@ -394,7 +659,7 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}"
     }
-
+    # ... [Your prompt logic here]...
     prompt = """
     You are given two images of a vintage or antique postcard:
 
@@ -528,8 +793,25 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
     return details
 
 
-# Function to get postcard details using the API
-def get_secondary_postcard_details(api_key, front_image_path, back_image_path):
+def get_secondary_postcard_details(api_key, front_image_path, back_image_path, timeout=20, max_workers=100):
+    """Get secondary postcard details with timeout and parallel processing."""
+
+    def api_call():
+        return _get_secondary_postcard_details_helper(api_key, front_image_path, back_image_path)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future = executor.submit(api_call)  # Submit the API call to the thread pool
+        try:
+            result = future.result(timeout=timeout)  # Wait with a timeout
+            return result
+        except concurrent.futures.TimeoutError:
+            print(f"Timeout occurred in get_secondary_postcard_details, skipping call")
+            return '{"Destination City": "", "Origin City": ""}'
+
+
+def _get_secondary_postcard_details_helper(api_key, front_image_path, back_image_path):
+    """Helper function to do the actual API call."""
+
     front_image_base64 = encode_image(front_image_path)
     back_image_base64 = encode_image(back_image_path)
 
@@ -537,7 +819,6 @@ def get_secondary_postcard_details(api_key, front_image_path, back_image_path):
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}"
     }
-
     prompt = """
     You are given two images of a vintage or antique postcard:
 
@@ -548,7 +829,7 @@ def get_secondary_postcard_details(api_key, front_image_path, back_image_path):
 
     1. **Origin City** If available, write the origin city, ONLY THE CITY. This is found within the circular black postage stamp.
     This is known as the cancel of the card. This is often written in circular text around the stamp. 
-    
+
     2. **Destination City** If available, write the destination city and the state, no comma eg Billings MT. This will likely be written on the card in handwriting. 
 
     Please output the result in the following structure, and NOTHING else:
@@ -584,7 +865,7 @@ def get_secondary_postcard_details(api_key, front_image_path, back_image_path):
     }
 
     If any of the information cannot be found on the postcard, please output just '' for that field.
-    
+
     YOU MUST USE THE STATE SHORTCODE FOR THE DESTINATION CITY, I.E., MT, IL, HI, ETC. IF YOU OUTPUT THE ACTUAL FULL STATE NAME, YOU HAVE FAILED YOUR TASK.
 
     Never ever shorten a city name, ie never do New York -> NY. 
@@ -631,6 +912,7 @@ def get_secondary_postcard_details(api_key, front_image_path, back_image_path):
         'content'] if 'choices' in response_json else "Details not available"
     print(f"Destination and Cancel Details: {details}")
     return details
+
 
 
 def process_batch(api_key, batch):
