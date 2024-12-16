@@ -21,10 +21,10 @@ import pandas as pd
 # Configure logging
 LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
 logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
+
 # Ensure logs go to the console in deployed environments:
 if "RENDER" in os.environ:
     logging.getLogger().addHandler(logging.StreamHandler())
-
 
 def clean_title(title, city):
     # Handle empty title or city cases
@@ -100,7 +100,6 @@ def clean_title(title, city):
     logging.debug(f"Cleaned title: {final_title}")
     return final_title
 
-
 def convert_to_html(text):
     # Escape special HTML characters
     text = html.escape(text)
@@ -111,24 +110,21 @@ def convert_to_html(text):
     # Join the paragraphs
     return ''.join(html_paragraphs)
 
-
 def remove_code_from_url(url):
     # Remove the dynamic "xx-001" segment from the URL
     return re.sub(r'(archives/)[^/]+/', r'\1', url)
 
-
-def save_postcards_to_csv(postcards_details, first_column_set):
+def save_postcards_to_csv(postcards_details, first_column_set, all_rows):
     logging.info("Starting save_postcards_to_csv")
     headers = ["front_image_link", "back_image_link", "SKU", "Title", "Destination Title", "Combo Title", "Region",
                "Country", "City",
                "Era",
                "Description"]
-    rows = []
 
     boilerplate = """Please inspect the scanned postcard image for condition. All cards are sold as is. Payment is due within 3 days of purchase or we may re-list it for other buyers. Please note we offer VOLUME DISCOUNTS (2 for 10%, 3 for 15%, 4 for 20%, and 10+ for 30%) so please check out our massive store selection. We have 1,000s of cards in stock with views from nearly every state and country, all used with messages, stamps, interesting postal routes, and more. Thank you so much for visiting postal*connection, you are appreciated.
-
-PS - WE BUY POSTCARDS! Top prices paid for good collections.
-"""
+     Use code with caution.
+    PS - WE BUY POSTCARDS! Top prices paid for good collections.
+    """
 
     counter = 1  # Initialize counter for SKU
 
@@ -138,8 +134,10 @@ PS - WE BUY POSTCARDS! Top prices paid for good collections.
         try:
             details = json.loads(postcard["details"])
         except json.JSONDecodeError:
-            logging.error(f"JSONDecodeError for postcard with original index: {postcard.get('original_index')}. Details: {postcard.get('details')}")
-            details = {}  # Handle JSON decoding errors gracefully
+            logging.error(
+                f"JSONDecodeError for postcard with original index: {postcard.get('original_index')}. Details: {postcard.get('details')}")
+            details = {"Title": "", "Region": "", "Country": "", "City": "", "Era": "", "Description": "",
+                       "Origin City": "", "Destination City": ""}  # Set default values
 
         title = details.get("Title", "")
         city = details.get("City", "")
@@ -161,6 +159,8 @@ PS - WE BUY POSTCARDS! Top prices paid for good collections.
             return variable_to_check.lower() in first_column_set
 
         def validate_destination(destination):
+            if not destination:
+                return ""
             # Use regex to split destination into location and state code parts
             match = re.match(r"^(.*?)(?=\s[A-Z]{2}$)", destination)
 
@@ -232,7 +232,6 @@ PS - WE BUY POSTCARDS! Top prices paid for good collections.
         logging.debug(f"Cancel Title: {cancel_title}")
         logging.debug(f"Destination Title: {destination_title}")
 
-
         front_image_link = postcard.get("front_image_link", "")
         back_image_link = postcard.get("back_image_link", "")
         # Define the pattern for 'xx-xxx' (alphanumeric characters with a hyphen)
@@ -256,7 +255,7 @@ PS - WE BUY POSTCARDS! Top prices paid for good collections.
         combo_title = destination_title if destination_title else cleaned_title
 
         row = {
-            "original_index": postcard["original_index"],  # Include original index
+            # "original_index": postcard["original_index"],  # Include original index
             "front_image_link": front_image_link,
             "back_image_link": back_image_link,
             "SKU": SKU,
@@ -270,27 +269,12 @@ PS - WE BUY POSTCARDS! Top prices paid for good collections.
             "Era": details.get("Era", ""),
             "Description": total_description_html  # Use the HTML-formatted description
         }
-        rows.append(row)
-
-    # Sort rows by the original index
-    sorted_rows = sorted(rows, key=lambda x: x["original_index"])
-
-    # Remove 'original_index' before writing to CSV
-    for row in sorted_rows:
-        row.pop("original_index", None)
-
-    # Write the sorted data to the CSV file
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp_file:
-        with open(tmp_file.name, mode="w", newline="", encoding="utf-8") as file:
-            writer = csv.DictWriter(file, fieldnames=headers, quotechar='"', quoting=csv.QUOTE_ALL)
-            writer.writeheader()
-            writer.writerows(sorted_rows)
-
-    logging.info(f"CSV file saved to: {tmp_file.name}")
-    return tmp_file.name
+        all_rows.append(row)
 
 
-# Function to clean and normalize text
+    logging.info(f"save_postcards_to_csv completed.")
+    return all_rows
+
 def clean_text(text):
     if pd.isnull(text):
         return ''
@@ -320,8 +304,6 @@ def clean_text(text):
 
     return text
 
-
-# Function to encode image to base64
 def encode_image(image_path):
     try:
         with open(image_path, "rb") as image_file:
@@ -329,7 +311,6 @@ def encode_image(image_path):
     except Exception as e:
         logging.error(f"Error encoding image: {image_path}. Error: {e}")
         return None
-
 
 def download_images_from_links(links, tmp_dir):
     logging.info("Starting download_images_from_links")
@@ -383,6 +364,16 @@ def download_images_from_links(links, tmp_dir):
 
         except Exception as e:
             logging.error(f"Failed to download images at index {idx}: {e}")
+            with postcards_lock:
+                postcards.append({
+                    "original_index": idx // 2,
+                    "front_image_filename": "",
+                    "back_image_filename": "",
+                    "front_image_path": "",
+                    "back_image_path": "",
+                    "front_image_link": front_link,
+                    "back_image_link": None  # If there was no back image, it should also be null.
+                })
         finally:
             with progress_lock:
                 downloaded_count += 2  # Assuming pairs
@@ -402,7 +393,6 @@ def download_images_from_links(links, tmp_dir):
 
     return postcards
 
-
 def get_postcard_details(api_key, front_image_path, back_image_path, timeout=20, max_workers=100):
     """Get postcard details with timeout and parallel processing."""
     logging.debug(f"Starting get_postcard_details for front image: {front_image_path}")
@@ -417,9 +407,13 @@ def get_postcard_details(api_key, front_image_path, back_image_path, timeout=20,
             logging.debug(f"get_postcard_details completed for front image: {front_image_path}")
             return result
         except concurrent.futures.TimeoutError:
-            logging.warning(f"Timeout occurred in get_postcard_details, skipping call for front image: {front_image_path}")
+            logging.warning(
+                f"Timeout occurred in get_postcard_details, skipping call for front image: {front_image_path}")
             return '{"Title": "", "Region": "", "Country": "", "City": "", "Era": "", "Description": ""}'
-
+        except Exception as e:
+            logging.error(
+                f"Exception in get_postcard_details, skipping call for front image: {front_image_path}. Error: {e}")
+            return '{"Title": "", "Region": "", "Country": "", "City": "", "Era": "", "Description": ""}'
 
 def _get_postcard_details_helper(api_key, front_image_path, back_image_path):
     """Helper function to do the actual API call."""
@@ -427,9 +421,9 @@ def _get_postcard_details_helper(api_key, front_image_path, back_image_path):
     back_image_base64 = encode_image(back_image_path)
 
     if front_image_base64 is None or back_image_base64 is None:
-      logging.error(f"Could not encode one of the images for API call in _get_postcard_details_helper. Front: {front_image_path}, Back: {back_image_path}")
-      return '{"Title": "", "Region": "", "Country": "", "City": "", "Era": "", "Description": ""}'
-
+        logging.error(
+            f"Could not encode one of the images for API call in _get_postcard_details_helper. Front: {front_image_path}, Back: {back_image_path}")
+        return '{"Title": "", "Region": "", "Country": "", "City": "", "Era": "", "Description": ""}'
 
     headers = {
         "Content-Type": "application/json",
@@ -571,11 +565,14 @@ def _get_postcard_details_helper(api_key, front_image_path, back_image_path):
     except requests.exceptions.RequestException as e:
         logging.error(f"API request failed: {e}")
         return '{"Title": "", "Region": "", "Country": "", "City": "", "Era": "", "Description": ""}'
-
+    except Exception as e:
+        logging.error(f"Exception in _get_postcard_details_helper, skipping call. Error: {e}")
+        return '{"Title": "", "Region": "", "Country": "", "City": "", "Era": "", "Description": ""}'
 
 def get_secondary_postcard_details(api_key, front_image_path, back_image_path, timeout=20, max_workers=100):
     """Get secondary postcard details with timeout and parallel processing."""
     logging.debug(f"Starting get_secondary_postcard_details for front image: {front_image_path}")
+
     def api_call():
         return _get_secondary_postcard_details_helper(api_key, front_image_path, back_image_path)
 
@@ -586,9 +583,13 @@ def get_secondary_postcard_details(api_key, front_image_path, back_image_path, t
             logging.debug(f"get_secondary_postcard_details completed for front image: {front_image_path}")
             return result
         except concurrent.futures.TimeoutError:
-            logging.warning(f"Timeout occurred in get_secondary_postcard_details, skipping call for front image: {front_image_path}")
+            logging.warning(
+                f"Timeout occurred in get_secondary_postcard_details, skipping call for front image: {front_image_path}")
             return '{"Destination City": "", "Origin City": ""}'
-
+        except Exception as e:
+            logging.error(
+                f"Exception in get_secondary_postcard_details, skipping call for front image: {front_image_path}. Error: {e}")
+            return '{"Destination City": "", "Origin City": ""}'
 
 def _get_secondary_postcard_details_helper(api_key, front_image_path, back_image_path):
     """Helper function to do the actual API call."""
@@ -597,8 +598,9 @@ def _get_secondary_postcard_details_helper(api_key, front_image_path, back_image
     back_image_base64 = encode_image(back_image_path)
 
     if front_image_base64 is None or back_image_base64 is None:
-      logging.error(f"Could not encode one of the images for API call in _get_secondary_postcard_details_helper. Front: {front_image_path}, Back: {back_image_path}")
-      return '{"Destination City": "", "Origin City": ""}'
+        logging.error(
+            f"Could not encode one of the images for API call in _get_secondary_postcard_details_helper. Front: {front_image_path}, Back: {back_image_path}")
+        return '{"Destination City": "", "Origin City": ""}'
 
     headers = {
         "Content-Type": "application/json",
@@ -691,15 +693,19 @@ def _get_secondary_postcard_details_helper(api_key, front_image_path, back_image
         # "type": "json_object"
     }
     try:
-      response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
-      response.raise_for_status()  # Raise an exception for bad status codes (4xx or 5xx)
-      response_json = response.json()
-      details = response_json['choices'][0]['message']['content'] if 'choices' in response_json else "Details not available"
-      logging.debug(f"Secondary API response: {details}")
-      return details
+        response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
+        response.raise_for_status()  # Raise an exception for bad status codes (4xx or 5xx)
+        response_json = response.json()
+        details = response_json['choices'][0]['message'][
+            'content'] if 'choices' in response_json else "Details not available"
+        logging.debug(f"Secondary API response: {details}")
+        return details
     except requests.exceptions.RequestException as e:
-      logging.error(f"Secondary API request failed: {e}")
-      return '{"Destination City": "", "Origin City": ""}'
+        logging.error(f"Secondary API request failed: {e}")
+        return '{"Destination City": "", "Origin City": ""}'
+    except Exception as e:
+        logging.error(f"Exception in _get_secondary_postcard_details_helper, skipping call. Error: {e}")
+        return '{"Destination City": "", "Origin City": ""}'
 
 
 def process_batch(api_key, batch):
@@ -712,6 +718,7 @@ def process_batch(api_key, batch):
         back_image_link = postcard["back_image_link"]
         original_index = postcard["original_index"]
         logging.debug(f"Processing postcard from original index {original_index} in process_details")
+
         postcard_details = get_postcard_details(api_key, front_image_path, back_image_path)
         secondary_postcard_details = get_secondary_postcard_details(api_key, front_image_path, back_image_path)
 
@@ -722,8 +729,8 @@ def process_batch(api_key, batch):
         except json.JSONDecodeError as e:
             logging.error(
                 f"JSONDecodeError in process_batch for postcard at {original_index}: {e}. Details: {postcard_details}, {secondary_postcard_details}")
-            postcard_details = {}
-            secondary_postcard_details = {}
+            postcard_details = {"Title": "", "Region": "", "Country": "", "City": "", "Era": "", "Description": ""}
+            secondary_postcard_details = {"Destination City": "", "Origin City": ""}
 
         # Merge the dictionaries
         postcard_details.update(secondary_postcard_details)
@@ -744,11 +751,11 @@ def process_batch(api_key, batch):
 
 
 def get_image_index(filename):
-    m = re.search(r'image_(\d+)\.jpg', filename)
+    m = re.search(r'image_(\d+).jpg', filename)
     return int(m.group(1)) if m else -1
 
 
-def process_postcards_in_folder(api_key, postcards, workers=20):
+def process_postcards_in_folder(api_key, postcards, workers=200):
     logging.info("Starting process_postcards_in_folder")
     total_postcards = len(postcards)
     if total_postcards == 0:
@@ -814,13 +821,21 @@ def process_postcards_in_folder(api_key, postcards, workers=20):
 
     return postcards_details
 
+def download_callback():
+    st.session_state.downloaded = True
+    #st.rerun()
+
 
 def main():
     if "links" not in st.session_state:
         st.session_state.links = None
 
-    if "completed_batches" not in st.session_state:
-        st.session_state.completed_batches = set()
+    if "all_csv_data" not in st.session_state:
+        st.session_state.all_csv_data = None
+
+    if "downloaded" not in st.session_state:
+        st.session_state.downloaded = False
+
 
     st.set_page_config(
         page_title="eBay Processor",
@@ -838,7 +853,13 @@ def main():
     st.write("Upload a set of postcard image links (front and back) for Ebay processing.")
 
     api_key = os.getenv("OPENAI_API_KEY")
+
+    if st.session_state.downloaded:
+        st.write("Data has been downloaded.")
+        return  # Stop here if the download happened
+
     links_input = st.text_area("Paste image URLs (one per line)")
+
     if links_input:
         links = [link for link in links_input.splitlines() if link.strip()] if links_input else []
         st.session_state.links = links
@@ -847,67 +868,62 @@ def main():
 
     if st.session_state.links:
         links = st.session_state.links
-        batch_size = 200  # Set batch size
+        batch_size = 50  # Set batch size
+        all_rows = []
 
-        for i in range(0, len(links), batch_size):
-            logging.info(f"Starting processing for batch: {i // batch_size + 1}")
-            current_links = links[i:i + batch_size]
-            st.write(
-                f"Processing batch {i // batch_size + 1} of {math.ceil(len(links) / batch_size)}")  # Showing the batch currently being processed.
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            for i in range(0, len(links), batch_size):
+                logging.info(f"Starting processing for batch: {i // batch_size + 1}")
+                current_links = links[i:i + batch_size]
+                st.write(
+                    f"Processing batch {i // batch_size + 1} of {math.ceil(len(links) / batch_size)}")  # Showing the batch currently being processed.
 
-            if f"csv_data{i // batch_size}" not in st.session_state:
-                with tempfile.TemporaryDirectory() as tmp_dir:
-                    # Download and save images from the links
-                    with st.spinner(f"Getting image files for batch {i // batch_size + 1}..."):
-                        logging.info(f"Downloading images for batch: {i // batch_size + 1}")
-                        postcards = download_images_from_links(current_links, tmp_dir)
+                # Download and save images from the links
+                with st.spinner(f"Getting image files for batch {i // batch_size + 1}..."):
+                    logging.info(f"Downloading images for batch: {i // batch_size + 1}")
+                    postcards = download_images_from_links(current_links, tmp_dir)
 
-                    with st.spinner(f"Processing images for batch {i // batch_size + 1}..."):
-                        # Process postcards using workers
-                        logging.info(f"Processing images for batch: {i // batch_size + 1}")
-                        postcards_details = process_postcards_in_folder(api_key, postcards, workers=100)
-                        st.write("Processing complete!")
+                with st.spinner(f"Processing images for batch {i // batch_size + 1}..."):
+                    # Process postcards using workers
+                    logging.info(f"Processing images for batch: {i // batch_size + 1}")
+                    postcards_details = process_postcards_in_folder(api_key, postcards, workers=100)
+                    st.write("Processing complete!")
 
-                        # Save the results to a CSV file
-                        logging.info(f"Saving CSV for batch: {i // batch_size + 1}")
-                        csv_file = save_postcards_to_csv(postcards_details, first_column_set)
+                    # Save the results to a CSV file
+                    logging.info(f"Saving CSV for batch: {i // batch_size + 1}")
+                    all_rows = save_postcards_to_csv(postcards_details, first_column_set, all_rows)
 
-                        # Read the CSV file and store data in session state
-                        with open(csv_file, "rb") as f:
-                            st.session_state[f"csv_data{i // batch_size}"] = f.read()
+        if all_rows:
+            # create a pandas dataframe
+            df = pd.DataFrame(all_rows)
 
-                        df = pd.read_csv(csv_file)
+            # Create a copy of the original DataFrame to store the cleaned data
+            df_cleaned = df.copy()
 
-                        # Create a copy of the original DataFrame to store the cleaned data
-                        df_cleaned = df.copy()
+            columns_to_clean = [col for i, col in enumerate(df_cleaned.columns[3:10]) if
+                                i + 3 != 7]  # 3:10 - description, title, dest title, combo, region, country, city and era are here
+            df_cleaned.loc[:, columns_to_clean] = df_cleaned.loc[:, columns_to_clean].applymap(
+                clean_text)
+            df_cleaned = df_cleaned.fillna('')
 
-                        columns_to_clean = [col for i, col in enumerate(df_cleaned.columns[4:11]) if i + 4 != 9]
-                        df_cleaned.loc[:, columns_to_clean] = df_cleaned.loc[:, columns_to_clean].applymap(clean_text)
+            # Save the cleaned data to a new CSV file
+            logging.info(f"Saving cleaned CSV file.")
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp_file:
+                df_cleaned.to_csv(tmp_file.name, index=False)
 
-                        df_cleaned = df_cleaned.fillna('')
+                # Read the CSV file and store data in session state
+                with open(tmp_file.name, "rb") as f:
+                    st.session_state.all_csv_data = f.read()
 
-                        # Save the cleaned data to a new CSV file
-                        logging.info(f"Saving cleaned CSV file for batch: {i // batch_size + 1}")
-                        df_cleaned.to_csv(f'cleaned_file_batch{i // batch_size}.csv', index=False)
-
-                        # Read the CSV file and store data in session state
-                        with open(f'cleaned_file_batch{i // batch_size}.csv', "rb") as f:
-                            st.session_state[f"csv_data{i // batch_size}"] = f.read()
-
-            if st.session_state[f"csv_data{i // batch_size}"]:
-                # Create the download button, using stored CSV data
-                if st.download_button(
-                        label=f"Download CSV Batch {i // batch_size + 1}",
-                        data=st.session_state[f"csv_data{i // batch_size}"],
-                        file_name=f"postcards_batch{i // batch_size + 1}.csv",
-                        mime="text/csv"
-                ):
-                    logging.info(f"CSV for batch {i // batch_size + 1} Downloaded.")
-                    st.session_state.links = None
-                    st.session_state[f"csv_data{i // batch_size}"] = None
-                    st.rerun()
-                else:
-                    pass
+                if st.session_state.all_csv_data:
+                    # Create the download button, using stored CSV data
+                    st.download_button(
+                        label=f"Download Final CSV",
+                        data=st.session_state.all_csv_data,
+                        file_name=f"postcards_final.csv",
+                        mime="text/csv",
+                        on_click=download_callback
+                    )
 
 
 if __name__ == "__main__":
