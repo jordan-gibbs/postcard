@@ -1,4 +1,4 @@
-import os6 -
+import os
 import zipfile
 import tempfile
 import streamlit as st
