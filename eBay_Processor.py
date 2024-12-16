@@ -742,6 +742,9 @@ def main():
     if "links" not in st.session_state:
         st.session_state.links = None
 
+    if "completed_batches" not in st.session_state:
+        st.session_state.completed_batches = set()
+
 
     st.set_page_config(
         page_title="eBay Processor",
@@ -767,54 +770,64 @@ def main():
         pass
 
     if st.session_state.links:
-        if "csv_data1" not in st.session_state:
-            with tempfile.TemporaryDirectory() as tmp_dir:
-                # Download and save images from the links
-                with st.spinner("Getting image files..."):
-                    postcards = download_images_from_links(links, tmp_dir)
+        links = st.session_state.links
+        batch_size = 100  # Set batch size
 
-                with st.spinner("Processing images..."):
-                    # Process postcards using workers
-                    postcards_details = process_postcards_in_folder(api_key, postcards, workers=10)
-                    st.write("Processing complete!")
+        for i in range(0, len(links), batch_size):
 
-                    # Save the results to a CSV file
-                    csv_file = save_postcards_to_csv(postcards_details, first_column_set)
+            current_links = links[i:i + batch_size]
+            st.write(
+                f"Processing batch {i // batch_size + 1} of {math.ceil(len(links) / batch_size)}")  # Showing the batch currently being processed.
 
-                    # Read the CSV file and store data in session state
-                    with open(csv_file, "rb") as f:
-                        st.session_state.csv_data1 = f.read()
+            if f"csv_data{i // batch_size}" not in st.session_state:
+                with tempfile.TemporaryDirectory() as tmp_dir:
+                    # Download and save images from the links
+                    with st.spinner(f"Getting image files for batch {i // batch_size + 1}..."):
+                        postcards = download_images_from_links(current_links, tmp_dir)
 
-                    df = pd.read_csv(csv_file)
+                    with st.spinner(f"Processing images for batch {i // batch_size + 1}..."):
+                        # Process postcards using workers
+                        postcards_details = process_postcards_in_folder(api_key, postcards, workers=100)
+                        st.write("Processing complete!")
 
-                    # Create a copy of the original DataFrame to store the cleaned data
-                    df_cleaned = df.copy()
+                        # Save the results to a CSV file
+                        csv_file = save_postcards_to_csv(postcards_details, first_column_set)
 
-                    columns_to_clean = [col for i, col in enumerate(df_cleaned.columns[4:11]) if i + 4 != 9]
-                    df_cleaned.loc[:, columns_to_clean] = df_cleaned.loc[:, columns_to_clean].applymap(clean_text)
+                        # Read the CSV file and store data in session state
+                        with open(csv_file, "rb") as f:
+                            st.session_state[f"csv_data{i // batch_size}"] = f.read()
 
-                    df_cleaned = df_cleaned.fillna('')
+                        df = pd.read_csv(csv_file)
 
-                    # Save the cleaned data to a new CSV file
-                    df_cleaned.to_csv('cleaned_file.csv', index=False)
+                        # Create a copy of the original DataFrame to store the cleaned data
+                        df_cleaned = df.copy()
 
-                    # Read the CSV file and store data in session state
-                    with open('cleaned_file.csv', "rb") as f:
-                        st.session_state.csv_data1 = f.read()
+                        columns_to_clean = [col for i, col in enumerate(df_cleaned.columns[4:11]) if i + 4 != 9]
+                        df_cleaned.loc[:, columns_to_clean] = df_cleaned.loc[:, columns_to_clean].applymap(clean_text)
 
-        if st.session_state.csv_data1:
-            # Create the download button, using stored CSV data
-            if st.download_button(
-                label="Download CSV",
-                data=st.session_state.csv_data1,
-                file_name="postcards.csv",
-                mime="text/csv"
-            ):
-                st.session_state.links = None
-                st.session_state.csv_data1 = None
-                st.rerun()
-            else:
-                pass
+                        df_cleaned = df_cleaned.fillna('')
+
+                        # Save the cleaned data to a new CSV file
+                        df_cleaned.to_csv(f'cleaned_file_batch{i // batch_size}.csv', index=False)
+
+                        # Read the CSV file and store data in session state
+                        with open(f'cleaned_file_batch{i // batch_size}.csv', "rb") as f:
+                            st.session_state[f"csv_data{i // batch_size}"] = f.read()
+
+            if st.session_state[f"csv_data{i // batch_size}"]:
+
+                # Create the download button, using stored CSV data
+                if st.download_button(
+                        label=f"Download CSV Batch {i // batch_size + 1}",
+                        data=st.session_state[f"csv_data{i // batch_size}"],
+                        file_name=f"postcards_batch{i // batch_size + 1}.csv",
+                        mime="text/csv"
+                ):
+                    st.session_state.links = None
+                    st.session_state[f"csv_data{i // batch_size}"] = None
+                    st.rerun()
+                else:
+                    pass
 
 
 if __name__ == "__main__":
