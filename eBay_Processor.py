@@ -769,6 +769,7 @@ def main():
     else:
         pass
 
+
     if st.session_state.links:
         links = st.session_state.links
         batch_size = 100  # Set batch size
