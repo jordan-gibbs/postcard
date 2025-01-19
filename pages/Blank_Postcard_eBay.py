@@ -82,8 +82,8 @@ def clean_title(title, city):
     final_title_length = len(final_title)  # +1 for the space before the year
     words = final_title.split()
 
-    # Check if initial title length is 80 or more
-    if final_title_length >= 80:
+    # Check if initial title length is 75 or more
+    if final_title_length >= 75:
         words = final_title.split()
 
         # Step 1: Remove "Vintage" and "Postcard" if they exist in the list
@@ -91,8 +91,8 @@ def clean_title(title, city):
         final_title = ' '.join(words)
         final_title_length = len(final_title.strip())
 
-        # Step 2: If still over 80, keep removing the first word until the title is under 80 characters
-        while final_title_length > 80 and words:
+        # Step 2: If still over 75, keep removing the first word until the title is under 75 characters
+        while final_title_length > 75 and words:
             words.pop(0)
             final_title = ' '.join(words)
             final_title_length = len(final_title.strip())
@@ -114,7 +114,7 @@ def remove_code_from_url(url):
     # Remove the dynamic "xx-001" segment from the URL
     return re.sub(r'(archives/)[^/]+/', r'\1', url)
 
-def save_postcards_to_csv(postcards_details, first_column_set, all_rows):
+def save_postcards_to_csv(postcards_details, first_column_set, all_rows, decade):
     logging.info("Starting save_postcards_to_csv")
     headers = ["front_image_link", "SKU", "Title", "Destination Title", "Combo Title", "Region",
                "Country", "City",
@@ -193,8 +193,8 @@ def save_postcards_to_csv(postcards_details, first_column_set, all_rows):
         else:
             destination_title = ""
 
-        # Step 2: Truncate cancel_title if it exceeds 80 characters
-        if len(cancel_title) >= 80:
+        # Step 2: Truncate cancel_title if it exceeds 75 characters
+        if len(cancel_title) >= 75:
             cancel_words = cancel_title.split()
 
             # Remove "Vintage" and "Postcard" if present
@@ -209,21 +209,21 @@ def save_postcards_to_csv(postcards_details, first_column_set, all_rows):
                     unique_cancel_words.append(word)  # Keep the original casing
                     seen_words.add(lower_word)
 
-            # Truncate from the beginning until the title is under 80 characters
-            while len(' '.join(unique_cancel_words)) >= 80 and unique_cancel_words:
+            # Truncate from the beginning until the title is under 75 characters
+            while len(' '.join(unique_cancel_words)) >= 75 and unique_cancel_words:
                 unique_cancel_words.pop(0)
 
-            cancel_title = ' '.join(unique_cancel_words) if len(' '.join(unique_cancel_words)) < 80 else ""
+            cancel_title = ' '.join(unique_cancel_words) if len(' '.join(unique_cancel_words)) < 75 else ""
 
-        # Step 3: Truncate destination_title if it exceeds 80 characters
-        if len(destination_title) >= 80:
+        # Step 3: Truncate destination_title if it exceeds 75 characters
+        if len(destination_title) >= 75:
             destination_words = destination_title.split()
             # Remove "Vintage" and "Postcard" if present
             destination_words = [word for word in destination_words if word not in ["Vintage", "Postcard", "Antique"]]
-            # Truncate from the beginning until the title is under 80 characters
-            while len(' '.join(destination_words)) >= 80 and destination_words:
+            # Truncate from the beginning until the title is under 75 characters
+            while len(' '.join(destination_words)) >= 75 and destination_words:
                 destination_words.pop(0)
-            destination_title = ' '.join(destination_words) if len(' '.join(destination_words)) < 80 else ""
+            destination_title = ' '.join(destination_words) if len(' '.join(destination_words)) < 75 else ""
 
         if cancel_title != "":
             cleaned_title = cancel_title
@@ -257,7 +257,7 @@ def save_postcards_to_csv(postcards_details, first_column_set, all_rows):
             # "original_index": postcard["original_index"],  # Include original index
             "front_image_link": front_image_link,
             "SKU": SKU,
-            "Title": cleaned_title,
+            "Title": f"{cleaned_title} {decade}",
             # "Cancel Title": cancel_title,
             # "Destination Title": destination_title,
             # "Combo Title": combo_title,
@@ -426,8 +426,8 @@ def _get_postcard_details_helper(api_key, front_image_path):
 
     Example Outputs:
     {
-        "Title": "Vintage Georgia Postcard SAVANNAH Beach Highway 1983",
-        "shortTitle": "Vintage Georgia Postcard SAVANNAH Beach 1983",
+        "Title": "Vintage Georgia Postcard SAVANNAH Beach Highway",
+        "shortTitle": "Vintage Georgia Postcard SAVANNAH Beach",
         "Region": "Georgia",
         "Country": "USA",
         "City": "Savannah",
@@ -436,8 +436,8 @@ def _get_postcard_details_helper(api_key, front_image_path):
     
     Example 2:
     {
-        "Title": "Antique Wyoming Postcard YELLOWSTONE National Park Gibbon Falls 1913",
-        "shortTitle": "Antique Wyoming Postcard YELLOWSTONE Gibbon Falls 1913",
+        "Title": "Antique Wyoming Postcard YELLOWSTONE National Park Gibbon Falls",
+        "shortTitle": "Antique Wyoming Postcard YELLOWSTONE Gibbon Falls",
         "Region": "Wyoming",
         "Country": "USA",
         "City": "Yellowstone",
@@ -446,8 +446,8 @@ def _get_postcard_details_helper(api_key, front_image_path):
     
     Example 3:
     {
-        "Title": "Antique Florida Postcard ST. PETERSBURG John's Pass Bridge 1957",
-        "shortTitle": "Antique Florida Postcard ST. PETERSBURG John's Pass 1957",
+        "Title": "Antique Florida Postcard ST. PETERSBURG John's Pass Bridge",
+        "shortTitle": "Antique Florida Postcard ST. PETERSBURG John's Pass",
         "Region": "Florida",
         "Country": "USA",
         "City": "St. Petersburg",
@@ -456,8 +456,8 @@ def _get_postcard_details_helper(api_key, front_image_path):
     
     Example 4:
     {
-        "Title": "Vintage Virginia Postcard NEWPORT NEWS Mariner's Museum 1999",
-        "shortTitle": "Vintage Virginia Postcard NEWPORT NEWS 1999",
+        "Title": "Vintage Virginia Postcard NEWPORT NEWS Mariner's Museum",
+        "shortTitle": "Vintage Virginia Postcard NEWPORT NEWS",
         "Region": "Virginia",
         "Country": "USA",
         "City": "Newport News",
@@ -466,8 +466,8 @@ def _get_postcard_details_helper(api_key, front_image_path):
     
     Example 5:
     {
-        "Title": "Vintage Tennessee Postcard MEMPHIS Romeo & Juliet in Cotton Field 1938",
-        "shortTitle": "Vintage Tennessee Postcard MEMPHIS Cotton Field 1938",
+        "Title": "Vintage Tennessee Postcard MEMPHIS Romeo & Juliet in Cotton Field",
+        "shortTitle": "Vintage Tennessee Postcard MEMPHIS Cotton Field",
         "Region": "Tennessee",
         "Country": "USA",
         "City": "Memphis",
@@ -488,6 +488,10 @@ def _get_postcard_details_helper(api_key, front_image_path):
     Never output any sort of formatting block, i.e. ```json just output the raw string.
 
     Try to max out the 80 character limit in the title field, keyword stuff if you must. Never repeat the city or any words within the title ever. 
+    
+    Try to stuff as much information into the title as possible, but no years or decades. 
+    
+    
     The short title can be creatively made, using same formatting guidelines, just make sure it is 1-2 words shorter than the actual first title you wrote.
     Make sure to carefully analyze the **text on the back** of the postcard as well, since it may contain valuable information like the city, region, or country.
     """
@@ -805,6 +809,12 @@ def main():
     st.title("🖼️Blank eBay Processor")
     st.write("Upload a set of postcard image links (front and back) for Ebay processing.")
 
+    decades = ["1900s", "1910s", "1920s", "1930s", "1940s", "1950s", "1960s", "1970s", "1980s", "1990s", "2000s"]
+
+    decade = st.selectbox(
+        "Select a decade to append to the end of each title:",
+        options=decades,)
+
     api_key = os.getenv("OPENAI_API_KEY")
 
     if st.session_state.downloaded:
@@ -844,7 +854,7 @@ def main():
 
                     # Save the results to a CSV file
                     logging.info(f"Saving CSV for batch: {i // batch_size + 1}")
-                    all_rows = save_postcards_to_csv(postcards_details, first_column_set, all_rows)
+                    all_rows = save_postcards_to_csv(postcards_details, first_column_set, all_rows, decade)
 
         if all_rows:
             # create a pandas dataframe
