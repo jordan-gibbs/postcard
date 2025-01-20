@@ -83,7 +83,7 @@ def clean_title(title, city):
     words = final_title.split()
 
     # Check if initial title length is 75 or more
-    if final_title_length >= 75:
+    if final_title_length >= 71:
         words = final_title.split()
 
         # Step 1: Remove "Vintage" and "Postcard" if they exist in the list
@@ -91,8 +91,8 @@ def clean_title(title, city):
         final_title = ' '.join(words)
         final_title_length = len(final_title.strip())
 
-        # Step 2: If still over 75, keep removing the first word until the title is under 75 characters
-        while final_title_length > 75 and words:
+        # Step 2: If still over 71, keep removing the first word until the title is under 71 characters
+        while final_title_length > 71 and words:
             words.pop(0)
             final_title = ' '.join(words)
             final_title_length = len(final_title.strip())
