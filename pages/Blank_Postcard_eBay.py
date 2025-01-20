@@ -809,7 +809,7 @@ def main():
     st.title("🖼️Blank eBay Processor")
     st.write("Upload a set of postcard image links (front and back) for Ebay processing.")
 
-    decades = ["1900s", "1910s", "1920s", "1930s", "1940s", "1950s", "1960s", "1970s", "1980s", "1990s", "2000s"]
+    decades = ["1900s-10s", "1920s-30s", "1940s-50s", "1960s-70s", "1980s-90s", "2000s-10s"]
 
     decade = st.selectbox(
         "Select a decade to append to the end of each title:",
