@@ -235,7 +235,7 @@ def save_postcards_to_csv(postcards_details, first_column_set, all_rows):
         front_image_link = postcard.get("front_image_link", "")
         back_image_link = postcard.get("back_image_link", "")
         # Define the pattern for 'xx-xxx' (alphanumeric characters with a hyphen)
-        pattern = r'[A-Za-z0-9]{2}-[A-Za-z0-9]{3}'
+        pattern = r'[A-Za-z0-9]{2}-[A-Za-z0-9]{3}|\d{2}[A-Z]|\d[A-Z]-\d{3}|[A-Za-z0-9]{3}-[A-Za-z0-9]{3}'
         # Search for the pattern in the front_image_link
         match = re.search(pattern, front_image_link)
         if match:
@@ -393,27 +393,54 @@ def download_images_from_links(links, tmp_dir):
 
     return postcards
 
-def get_postcard_details(api_key, front_image_path, back_image_path, timeout=20, max_workers=100):
-    """Get postcard details with timeout and parallel processing."""
-    logging.debug(f"Starting get_postcard_details for front image: {front_image_path}")
+DEFAULT_DETAILS_RESPONSE = '{"Title": "", "Region": "", "Country": "", "City": "", "Era": "", "Description": ""}'
+DEFAULT_SECONDARY_RESPONSE = '{"Destination City": "", "Origin City": ""}'
 
+def get_postcard_details(api_key, front_image_path, back_image_path, timeout=20, max_workers=100, max_retries=3, retry_delay=5): # Added retry params
+    """Get postcard details with timeout, parallel processing, and retries."""
+    logging.debug(f"Starting get_postcard_details for front image: {os.path.basename(front_image_path)}")
+
+    # Define the function to be called in the thread pool *outside* the loop
     def api_call():
         return _get_postcard_details_helper(api_key, front_image_path, back_image_path)
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future = executor.submit(api_call)  # Submit the API call to the thread pool
-        try:
-            result = future.result(timeout=timeout)  # Wait with a timeout
-            logging.debug(f"get_postcard_details completed for front image: {front_image_path}")
-            return result
-        except concurrent.futures.TimeoutError:
-            logging.warning(
-                f"Timeout occurred in get_postcard_details, skipping call for front image: {front_image_path}")
-            return '{"Title": "", "Region": "", "Country": "", "City": "", "Era": "", "Description": ""}'
-        except Exception as e:
-            logging.error(
-                f"Exception in get_postcard_details, skipping call for front image: {front_image_path}. Error: {e}")
-            return '{"Title": "", "Region": "", "Country": "", "City": "", "Era": "", "Description": ""}'
+    for attempt in range(max_retries):
+        logging.info(f"Attempt {attempt + 1}/{max_retries} for primary details: {os.path.basename(front_image_path)}")
+        result = DEFAULT_DETAILS_RESPONSE # Default result for this attempt if it fails
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future = executor.submit(api_call)
+            try:
+                # Wait for result with timeout
+                result = future.result(timeout=timeout)
+
+                # Check if the result from the helper ISN'T the default/blank one
+                if result != DEFAULT_DETAILS_RESPONSE:
+                    logging.debug(f"Success on attempt {attempt + 1}. get_postcard_details completed for: {os.path.basename(front_image_path)}")
+                    return result # SUCCESS - return immediately
+
+                # If result IS the default, it means the helper failed internally. Log and proceed to maybe retry.
+                logging.warning(f"Attempt {attempt + 1} failed (helper returned default response) for primary details: {os.path.basename(front_image_path)}")
+
+            except concurrent.futures.TimeoutError:
+                logging.warning(f"Timeout occurred on attempt {attempt + 1} in get_postcard_details for: {os.path.basename(front_image_path)}")
+                # Timeout is a failure, loop will continue to potentially retry
+
+            except Exception as e:
+                logging.error(f"Exception on attempt {attempt + 1} in get_postcard_details for: {os.path.basename(front_image_path)}. Error: {e}")
+                # Other exceptions also count as failure, loop will continue
+
+        # If we reach here, the attempt failed (timeout, exception, or default response from helper)
+        # If it wasn't the last attempt, wait before retrying
+        if attempt < max_retries - 1:
+            logging.info(f"Waiting {retry_delay} seconds before next attempt...")
+            time.sleep(retry_delay)
+        else:
+            # This was the last attempt
+            logging.error(f"All {max_retries} attempts failed for primary details: {os.path.basename(front_image_path)}. Returning default response.")
+
+    # If the loop finishes without returning a valid result, return the default
+    return DEFAULT_DETAILS_RESPONSE
 
 def _get_postcard_details_helper(api_key, front_image_path, back_image_path):
     """Helper function to do the actual API call."""
@@ -569,27 +596,51 @@ def _get_postcard_details_helper(api_key, front_image_path, back_image_path):
         logging.error(f"Exception in _get_postcard_details_helper, skipping call. Error: {e}")
         return '{"Title": "", "Region": "", "Country": "", "City": "", "Era": "", "Description": ""}'
 
-def get_secondary_postcard_details(api_key, front_image_path, back_image_path, timeout=20, max_workers=100):
-    """Get secondary postcard details with timeout and parallel processing."""
-    logging.debug(f"Starting get_secondary_postcard_details for front image: {front_image_path}")
+def get_secondary_postcard_details(api_key, front_image_path, back_image_path, timeout=20, max_workers=100, max_retries=3, retry_delay=5): # Added retry params
+    """Get secondary postcard details with timeout, parallel processing, and retries."""
+    logging.debug(f"Starting get_secondary_postcard_details for front image: {os.path.basename(front_image_path)}")
 
+    # Define the function to be called in the thread pool *outside* the loop
     def api_call():
         return _get_secondary_postcard_details_helper(api_key, front_image_path, back_image_path)
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future = executor.submit(api_call)  # Submit the API call to the thread pool
-        try:
-            result = future.result(timeout=timeout)  # Wait with a timeout
-            logging.debug(f"get_secondary_postcard_details completed for front image: {front_image_path}")
-            return result
-        except concurrent.futures.TimeoutError:
-            logging.warning(
-                f"Timeout occurred in get_secondary_postcard_details, skipping call for front image: {front_image_path}")
-            return '{"Destination City": "", "Origin City": ""}'
-        except Exception as e:
-            logging.error(
-                f"Exception in get_secondary_postcard_details, skipping call for front image: {front_image_path}. Error: {e}")
-            return '{"Destination City": "", "Origin City": ""}'
+    for attempt in range(max_retries):
+        logging.info(f"Attempt {attempt + 1}/{max_retries} for secondary details: {os.path.basename(front_image_path)}")
+        result = DEFAULT_SECONDARY_RESPONSE # Default result for this attempt if it fails
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future = executor.submit(api_call)
+            try:
+                # Wait for result with timeout
+                result = future.result(timeout=timeout)
+
+                # Check if the result from the helper ISN'T the default/blank one
+                if result != DEFAULT_SECONDARY_RESPONSE:
+                    logging.debug(f"Success on attempt {attempt + 1}. get_secondary_postcard_details completed for: {os.path.basename(front_image_path)}")
+                    return result # SUCCESS - return immediately
+
+                # If result IS the default, it means the helper failed internally. Log and proceed to maybe retry.
+                logging.warning(f"Attempt {attempt + 1} failed (helper returned default response) for secondary details: {os.path.basename(front_image_path)}")
+
+            except concurrent.futures.TimeoutError:
+                logging.warning(f"Timeout occurred on attempt {attempt + 1} in get_secondary_postcard_details for: {os.path.basename(front_image_path)}")
+                # Timeout is a failure, loop will continue to potentially retry
+
+            except Exception as e:
+                logging.error(f"Exception on attempt {attempt + 1} in get_secondary_postcard_details for: {os.path.basename(front_image_path)}. Error: {e}")
+                # Other exceptions also count as failure, loop will continue
+
+        # If we reach here, the attempt failed (timeout, exception, or default response from helper)
+        # If it wasn't the last attempt, wait before retrying
+        if attempt < max_retries - 1:
+            logging.info(f"Waiting {retry_delay} seconds before next attempt...")
+            time.sleep(retry_delay)
+        else:
+            # This was the last attempt
+            logging.error(f"All {max_retries} attempts failed for secondary details: {os.path.basename(front_image_path)}. Returning default response.")
+
+    # If the loop finishes without returning a valid result, return the default
+    return DEFAULT_SECONDARY_RESPONSE
 
 def _get_secondary_postcard_details_helper(api_key, front_image_path, back_image_path):
     """Helper function to do the actual API call."""
@@ -900,8 +951,8 @@ def main():
             # Create a copy of the original DataFrame to store the cleaned data
             df_cleaned = df.copy()
 
-            columns_to_clean = [col for i, col in enumerate(df_cleaned.columns[3:10]) if
-                                i + 3 != 7]  # 3:10 - description, title, dest title, combo, region, country, city and era are here
+            columns_to_clean = [col for i, col in enumerate(df_cleaned.columns[3:9]) if
+                                i + 3 != 7]  # 3:9 - description, title, dest title, combo, region, country, city and era are here
             df_cleaned.loc[:, columns_to_clean] = df_cleaned.loc[:, columns_to_clean].applymap(
                 clean_text)
             df_cleaned = df_cleaned.fillna('')
