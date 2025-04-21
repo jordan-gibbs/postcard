@@ -235,15 +235,15 @@ def save_postcards_to_csv(postcards_details, first_column_set, all_rows):
         front_image_link = postcard.get("front_image_link", "")
         back_image_link = postcard.get("back_image_link", "")
         # Define the pattern for 'xx-xxx' (alphanumeric characters with a hyphen)
-        pattern = r'[A-Za-z0-9]{2}-[A-Za-z0-9]{3}|\d{2}[A-Z]|\d[A-Z]-\d{3}|[A-Za-z0-9]{3}-[A-Za-z0-9]{3}'
-        # Search for the pattern in the front_image_link
-        match = re.search(pattern, front_image_link)
+        pattern = re.compile(r'([A-Za-z0-9]{2,})-(\d{3,})(?=\D|$)')
+
+        match = pattern.search(front_image_link)
         if match:
-            sku_prefix = match.group(0)  # If a match is found, use it
-            logging.debug(f"Matched SKU Prefix: {sku_prefix}")  # For debugging purposes
+            sku_prefix = f"{match.group(1)}-{match.group(2)}"
+            logging.debug(f"Matched SKU Prefix: {sku_prefix}")
         else:
-            sku_prefix = 'NOSKU'  # Default SKU prefix if no match is found
-            logging.warning("No SKU Prefix found, using default: NOSKU")  # For debugging purposes
+            sku_prefix = "NOSKU"
+            logging.warning("No SKU Prefix found, using default: NOSKU")
         # Generate SKU
         # SKU = f'{sku_prefix}_{counter:02d}'
         SKU = f'{sku_prefix}'
