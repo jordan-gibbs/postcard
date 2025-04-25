@@ -17,6 +17,7 @@ import logging
 import threading
 import unicodedata
 import pandas as pd
+from ebay_formatter import reformat_for_ebay
 
 # Configure logging
 LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
@@ -957,10 +958,12 @@ def main():
                 clean_text)
             df_cleaned = df_cleaned.fillna('')
 
+            ebay_ready = reformat_for_ebay(df_cleaned)  # or pass overrides here
+
             # Save the cleaned data to a new CSV file
             logging.info(f"Saving cleaned CSV file.")
             with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp_file:
-                df_cleaned.to_csv(tmp_file.name, index=False)
+                ebay_ready.to_csv(tmp_file, index=False)
 
                 # Read the CSV file and store data in session state
                 with open(tmp_file.name, "rb") as f:
