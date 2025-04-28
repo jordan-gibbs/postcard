@@ -497,7 +497,7 @@ def _get_postcard_details_helper(api_key, front_image_path):
     """
 
     payload = {
-        "model": "gpt-4o-2024-08-06",
+        "model": "gpt-4.1",
         "messages": [
             {
                 "role": "user",
@@ -628,7 +628,7 @@ def _get_secondary_postcard_details_helper(api_key, front_image_path, back_image
     """
 
     payload = {
-        "model": "gpt-4o-2024-08-06",
+        "model": "gpt-4.1",
         "messages": [
             {
                 "role": "user",

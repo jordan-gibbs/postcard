@@ -295,7 +295,7 @@ def get_postcard_details(api_key, front_image_path, back_image_path):
     """
 
     payload = {
-        "model": "gpt-4o-2024-08-06",
+        "model": "gpt-4.1",
         "messages": [
             {
                 "role": "user",
@@ -383,7 +383,7 @@ def date_retry(api_key, front_image_path, back_image_path, retries=3):
     """
 
     payload = {
-        "model": "gpt-4o-2024-08-06",
+        "model": "gpt-4.1",
         "messages": [
             {
                 "role": "user",
@@ -573,7 +573,7 @@ def analyze_row_with_ai(row, headers):
         """
 
     response = client.chat.completions.create(
-        model="gpt-4o-2024-08-06",
+        model="gpt-4.1",
         temperature=0,
         messages=[
             {"role": "system", "content": prompt},
