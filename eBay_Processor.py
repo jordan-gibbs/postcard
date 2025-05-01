@@ -466,7 +466,9 @@ def _get_postcard_details_helper(api_key, front_image_path, back_image_path):
 
     I need you to analyze both the front and back images and provide the following information:
 
-    1. **Title**: Create a descriptive title for the postcard based on the front and back. The title should be **70 characters or less**.
+    1. **Title**: Create a descriptive title for the postcard based on the front and back. The title should be **65 
+    characters or less**. If the card has a REAL PHOTOGRAPH in it, be sure to add 'RPPC' to the title. Getting the 
+    year in there is very important.  
     2. **Region**: Identify the U.S. state or region mentioned in the postcard.
     3. **Country**: Identify the country mentioned on the postcard.
     4. **City**: Identify the city or major landmark mentioned on the postcard.
@@ -547,7 +549,8 @@ def _get_postcard_details_helper(api_key, front_image_path, back_image_path):
 
     Never output any sort of formatting block, i.e. ```json just output the raw string.
 
-    Try to max out the 70 character limit in the title field, keyword stuff if you must. Never repeat the city or any words within the title ever. 
+    Try to max out the 65 character limit in the title field, keyword stuff if you must. Never repeat the city or any 
+    words within the title ever. 
     The short title can be creatively made, using same formatting guidelines, just make sure it is 1-2 words shorter than the actual first title you wrote.
     Make sure to carefully analyze the **text on the back** of the postcard as well, since it may contain valuable information like the city, region, or country.
     """
