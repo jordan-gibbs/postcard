@@ -467,8 +467,8 @@ def _get_postcard_details_helper(api_key, front_image_path, back_image_path):
     I need you to analyze both the front and back images and provide the following information:
 
     1. **Title**: Create a descriptive title for the postcard based on the front and back. The title should be **65 
-    characters or less**. If the card has a REAL PHOTOGRAPH in it, be sure to add 'RPPC' to the title. Getting the 
-    year in there is very important.  
+    characters or less**. If the front of the card has a REAL PHOTOGRAPH (not an illustration) in it, be sure to add 
+    'RPPC' at the end of the title. Getting the year in there is very important as well.   
     2. **Region**: Identify the U.S. state or region mentioned in the postcard.
     3. **Country**: Identify the country mentioned on the postcard.
     4. **City**: Identify the city or major landmark mentioned on the postcard.
@@ -480,8 +480,8 @@ def _get_postcard_details_helper(api_key, front_image_path, back_image_path):
 
     Example Output:
     {
-        "Title": "Vintage Georgia Postcard SAVANNAH Beach Highway 1983",
-        "shortTitle": "Vintage Georgia Postcard SAVANNAH Beach 1983",
+        "Title": "Vintage Georgia Postcard SAVANNAH Beach Highway 1983 RPPC",
+        "shortTitle": "Vintage Georgia Postcard SAVANNAH Beach 1983 RPPC",
         "Region": "Georgia",
         "Country": "USA",
         "City": "Savannah",
@@ -503,8 +503,8 @@ def _get_postcard_details_helper(api_key, front_image_path, back_image_path):
 
     Another Example:
     {
-        "Title": "Antique Florida Postcard ST. PETERSBURG John's Pass Bridge 1957",
-        "shortTitle": "Antique Florida Postcard ST. PETERSBURG John's Pass 1957",
+        "Title": "Antique Florida Postcard ST. PETERSBURG John's Pass Bridge 1957 RPPC",
+        "shortTitle": "Antique Florida Postcard ST. PETERSBURG John's Pass 1957 RPPC",
         "Region": "Florida",
         "Country": "USA",
         "City": "St. Petersburg",
@@ -527,8 +527,8 @@ def _get_postcard_details_helper(api_key, front_image_path, back_image_path):
 
     Another Example:
     {
-        "Title": "Vintage Tennessee Postcard MEMPHIS Romeo & Juliet in Cotton Field 1938",
-        "shortTitle": "Vintage Tennessee Postcard MEMPHIS Cotton Field 1938",
+        "Title": "Vintage Tennessee Postcard MEMPHIS Romeo & Juliet in Cotton Field 1938 RPPC",
+        "shortTitle": "Vintage Tennessee Postcard MEMPHIS Cotton Field 1938 RPPC",
         "Region": "Tennessee",
         "Country": "USA",
         "City": "Memphis",
