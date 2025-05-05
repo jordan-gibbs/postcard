@@ -235,23 +235,15 @@ def save_postcards_to_csv(postcards_details, first_column_set, all_rows):
 
         front_image_link = postcard.get("front_image_link", "")
         back_image_link = postcard.get("back_image_link", "")
-        # Define the pattern for 'xx-xxx' (alphanumeric characters with a hyphen)
-        pattern = re.compile(r'([A-Za-z0-9]{2,})-(\d{3,})(?=\D|$)')
 
-        match = pattern.search(front_image_link)
-        if match:
-            sku_prefix = f"{match.group(1)}-{match.group(2)}"
-            logging.debug(f"Matched SKU Prefix: {sku_prefix}")
-        else:
-            sku_prefix = "NOSKU"
-            logging.warning("No SKU Prefix found, using default: NOSKU")
-        # Generate SKU
-        # SKU = f'{sku_prefix}_{counter:02d}'
-        SKU = f'{sku_prefix}'
-        # Increment counter
-        counter += 1
-        # For debugging purposes, print SKU
-        # print("Generated SKU:", SKU)
+        try:
+            # take what comes *after* "/archives/"
+            after_archives = front_image_link.split("/archives/", 1)[1]
+            # then take everything *before* the next "/"
+            SKU = after_archives.split("/", 1)[0]
+        except IndexError:
+            # either "/archives/" wasn’t there or there was no trailing segment
+            SKU = "NOSKU"
 
         combo_title = destination_title if destination_title else cleaned_title
 
@@ -467,8 +459,11 @@ def _get_postcard_details_helper(api_key, front_image_path, back_image_path):
     I need you to analyze both the front and back images and provide the following information:
 
     1. **Title**: Create a descriptive title for the postcard based on the front and back. The title should be **65 
-    characters or less**. If the front of the card has a REAL PHOTOGRAPH (not an illustration) in it, be sure to add 
-    'RPPC' at the end of the title. Getting the year in there is very important as well.   
+    characters or less**. If the front of the card has a REAL PHOTOGRAPH (not an illustration or print) in it, 
+    be sure to add 'RPPC' at the end of the title. Getting the year in there is very important as well. IT IS NOT AN RPPC if you see 
+    things like: fine tonal gradation, dot structure typical of photomechanical printing, if it's a collotype or a 
+    photo-type print, it is not an RPPC. Also, if it has a publisher name on the back, it is almost never a real 
+    photo. Finally RPPC often have visible gloss, but not always.  
     2. **Region**: Identify the U.S. state or region mentioned in the postcard.
     3. **Country**: Identify the country mentioned on the postcard.
     4. **City**: Identify the city or major landmark mentioned on the postcard.

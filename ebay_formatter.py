@@ -63,7 +63,7 @@ def reformat_for_ebay(raw,         # DataFrame *or* list-of-dicts you already ha
         "Schedule Time":                  schedule_time,
         "Start price":                    cfg["start_price"],
         "Quantity":                       cfg["quantity"],
-        "Item photo URL":                 "#N/A",               # eBay placeholder
+        "Item photo URL":                 df["front_image_link"].fillna("") + "|" + df["back_image_link"].fillna(""),
         "URL1":                           df["front_image_link"],
         "Pipe":                           "|",
         "URL2":                           df["back_image_link"].fillna(""),
