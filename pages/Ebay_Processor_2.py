@@ -7,7 +7,7 @@ import time
 # --- Configuration ---
 # IMPORTANT: Replace this with the actual URL of your backend service on Render.com
 # Example: "https://your-service-name.onrender.com"
-BACKEND_API_URL = "http://localhost:8000"  # Use localhost for local testing, change for deployment
+BACKEND_API_URL = "https://postcard-worker-9m6z.onrender.com"  # Use localhost for local testing, change for deployment
 
 # --- Streamlit Page Setup ---
 st.set_page_config(
