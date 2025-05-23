@@ -23,6 +23,9 @@ if "submit_success_message" not in st.session_state:
     st.session_state.submit_success_message = None
 if "submitted_job_id" not in st.session_state:
     st.session_state.submitted_job_id = None
+# NEW: Initialize the session state variable that will control the text area's value
+if "links_text_area_value" not in st.session_state:
+    st.session_state.links_text_area_value = ""
 
 
 # --- Helper Functions ---
@@ -41,11 +44,16 @@ def submit_processing_job(links):
         return None
     except requests.exceptions.ConnectionError:
         st.error(
-            f"Could not connect to the backend API at {BACKEND_API_URL}. Please ensure the backend service is running.")
+            f"Could not connect to the backend API at {BACKEND_API_URL}. Please ensure the backend service is running and accessible.")
         return None
     except requests.exceptions.RequestException as e:
-        st.error(
-            f"Error submitting job to backend: {e}. Details: {response.json().get('detail', 'N/A') if response else 'N/A'}")
+        error_detail = "N/A"
+        if response is not None:
+            try:
+                error_detail = response.json().get('detail', str(response.text))
+            except json.JSONDecodeError:
+                error_detail = response.text
+        st.error(f"Error submitting job to backend: {e}. Details: {error_detail}")
         return None
 
 
@@ -61,11 +69,16 @@ def get_all_jobs():
         return []
     except requests.exceptions.ConnectionError:
         st.error(
-            f"Could not connect to the backend API at {BACKEND_API_URL}. Please ensure the backend service is running.")
+            f"Could not connect to the backend API at {BACKEND_API_URL}. Please ensure the backend service is running and accessible.")
         return []
     except requests.exceptions.RequestException as e:
-        st.error(
-            f"Error fetching job list from backend: {e}. Details: {response.json().get('detail', 'N/A') if response else 'N/A'}")
+        error_detail = "N/A"
+        if response is not None:
+            try:
+                error_detail = response.json().get('detail', str(response.text))
+            except json.JSONDecodeError:
+                error_detail = response.text
+        st.error(f"Error fetching job list from backend: {e}. Details: {error_detail}")
         return []
 
 
@@ -75,7 +88,13 @@ def submit_job_page():
     st.title("🖼️ Submit New Postcard Processing Job")
     st.write("Paste image URLs (front and back pairs) to start a new processing job.")
 
-    links_input = st.text_area("Paste image URLs (one per line)", height=200, key="links_input")
+    # Use the session state variable to control the text area's value
+    links_input = st.text_area(
+        "Paste image URLs (one per line)",
+        height=200,
+        value=st.session_state.links_text_area_value,  # This line changed
+        key="links_input_widget"  # Use a distinct key for the widget itself
+    )
 
     if st.button("Submit Job", type="primary"):
         links = [link.strip() for link in links_input.splitlines() if link.strip()]
@@ -97,26 +116,26 @@ def submit_job_page():
                 "You can view its status and download the result on the 'View Results' page."
             )
             st.session_state.submitted_job_id = result['job_id']
-            # Reset the textarea input after successful submission
-            st.session_state.links_input = ""
+            # Clear the text area value for the NEXT rerun
+            st.session_state.links_text_area_value = ""  # This line changed
             st.success(st.session_state.submit_success_message)
             st.balloons()  # Visual confirmation
+            st.rerun()  # Force a rerun to clear the text area and display the success message immediately.
         else:
             st.error("Failed to submit job. Please check the logs or try again.")
 
-    # Display success message persistently after redirect if it was set
+    # Display success message persistently after submission if it was set
     if st.session_state.submit_success_message:
         st.success(st.session_state.submit_success_message)
-        # Clear it after displaying to prevent it from showing on subsequent refreshes
-        # st.session_state.submit_success_message = None
-        # For this design, let's keep it until the user clears it or submits a new job.
+        # You might want to clear this message after a short delay or on next action
+        # For simplicity, I'll keep it here until a new job is submitted.
 
 
 def view_results_page():
     st.title("🗃️ Processed Postcard Results")
     st.write("Here you can see all past processing jobs and download their results.")
 
-    if st.button("Refresh Results"):
+    if st.button("Refresh Results", key="refresh_results_button"):
         st.cache_data.clear()  # Clear cache to fetch latest data
 
     jobs = get_all_jobs()
@@ -129,7 +148,9 @@ def view_results_page():
     df_jobs = pd.DataFrame(jobs)
 
     # Convert timestamp to a readable format
-    df_jobs['timestamp'] = pd.to_datetime(df_jobs['timestamp']).dt.strftime('%Y-%m-%d %H:%M:%S UTC')
+    # Ensure 'timestamp' column is in datetime format first
+    df_jobs['timestamp'] = pd.to_datetime(df_jobs['timestamp'])
+    df_jobs['timestamp'] = df_jobs['timestamp'].dt.strftime('%Y-%m-%d %H:%M:%S UTC')
 
     # Reorder columns for better presentation
     df_jobs = df_jobs[['job_id', 'status', 'timestamp', 'filename', 'error_message']]
@@ -145,24 +166,32 @@ def view_results_page():
 
     st.subheader("Download Specific Result")
     # Provide a selectbox or input for job ID to download
-    job_ids = [job['job_id'] for job in jobs]
-    selected_job_id = st.selectbox("Select Job ID to Download", options=job_ids, key="download_job_id")
+    # Filter for jobs that have a 'job_id' and are not None
+    valid_job_ids = [job['job_id'] for job in jobs if job.get('job_id')]
+
+    if not valid_job_ids:
+        st.info("No valid job IDs available for download.")
+        return
+
+    # Sort job IDs for consistent display, perhaps by timestamp implicitly via the jobs list
+    selected_job_id = st.selectbox("Select Job ID to Download", options=valid_job_ids, key="download_job_id")
 
     if selected_job_id:
         # Fetch the full job details to get the filename and check status
-        # This is a bit inefficient as we already have partial data, but robust.
-        selected_job_details = next((job for job in jobs if job['job_id'] == selected_job_id), None)
+        selected_job_details = next((job for job in jobs if job.get('job_id') == selected_job_id), None)
 
         if selected_job_details and selected_job_details.get("status") == "completed":
             download_endpoint = f"{BACKEND_API_URL}/jobs/{selected_job_id}/download"
             filename = selected_job_details.get("filename", f"postcards_job_{selected_job_id}.csv")
 
             try:
-                # Use a direct requests.get for download_button's data parameter
-                # The data parameter expects bytes, so fetch it directly
-                response = requests.get(download_endpoint, stream=True, timeout=60)  # Increased timeout for download
-                response.raise_for_status()
-                csv_bytes = response.content  # Read content into memory for download button
+                # To make st.download_button work, you need to provide the actual bytes data.
+                # You cannot just pass a URL to it if the URL requires fetching.
+                # So, we fetch the data from the backend first.
+                with st.spinner(f"Fetching '{filename}' for download..."):
+                    response = requests.get(download_endpoint, timeout=60)  # Increased timeout for download
+                    response.raise_for_status()
+                    csv_bytes = response.content  # Read content into memory for download button
 
                 st.download_button(
                     label=f"Download {filename}",
@@ -176,13 +205,19 @@ def view_results_page():
             except requests.exceptions.ConnectionError:
                 st.error(f"Could not connect to backend for download of job {selected_job_id}.")
             except requests.exceptions.RequestException as e:
-                st.error(f"Error fetching file for job {selected_job_id}: {e}")
+                error_detail = "N/A"
+                if response is not None:
+                    try:
+                        error_detail = response.json().get('detail', str(response.text))
+                    except json.JSONDecodeError:
+                        error_detail = response.text
+                st.error(f"Error fetching file for job {selected_job_id}: {e}. Details: {error_detail}")
 
         elif selected_job_details and selected_job_details.get("status") in ["pending", "processing"]:
             st.info(f"Job `{selected_job_id}` is currently **{selected_job_details['status']}**. Please refresh later.")
         elif selected_job_details and selected_job_details.get("status") == "failed":
             st.error(
-                f"Job `{selected_job_id}` **failed**. Error: {selected_job_details.get('error_message', 'No details.')}")
+                f"Job `{selected_job_id}` **failed**. Error: {selected_job_details.get('error_message', 'No details provided.')}")
         else:
             st.warning("Select a job to see its status or download.")
 
