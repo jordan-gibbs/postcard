@@ -22,14 +22,14 @@ from ebay_formatter import reformat_for_ebay  # Make sure this file is present
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure, OperationFailure
 from datetime import datetime
-from bson import ObjectId  # Import ObjectId for MongoDB document IDs
+from bson import ObjectId
 
 # --- FastAPI Imports ---
 from fastapi import FastAPI, HTTPException, BackgroundTasks, status
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List, Optional  # Import Optional
 from fastapi.responses import FileResponse, StreamingResponse
-import io  # For handling in-memory bytes for CSV download
+import io
 
 # Configure logging
 LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
@@ -64,94 +64,64 @@ except Exception as e:
 # --- Helper Functions (unchanged from previous step, except logging/Streamlit related removal) ---
 
 def clean_title(title, city):
-    # Handle empty title or city cases
     if not title:
         return title
-
-    # Remove unwanted quotation marks
     title = title.replace('"', '').replace("'", "")
-
-    # Split title into words and decapitalize where needed
     words = title.split()
     decapitalized_title = []
-
     for word in words:
-        if word.isupper() and len(word) > 2:  # Decapitalize words that are all uppercase
+        if word.isupper() and len(word) > 2:
             decapitalized_word = word.lower().capitalize()
             decapitalized_title.append(decapitalized_word)
         else:
             decapitalized_title.append(word)
-
-    # Join words back into the title
     title = ' '.join(decapitalized_title)
-
-    # Ensure non-empty city for the pattern matching
     if city:
         city_pattern = re.compile(r'\b' + re.escape(city) + r'\b', re.IGNORECASE)
         if city_pattern.search(title):
-            title = city_pattern.sub(city.upper(), title)  # Replace city name with uppercase
-
-    # Find the 4-digit year or a year with 's' (like 1950s)
+            title = city_pattern.sub(city.upper(), title)
     year_pattern = re.compile(r'(\b\d{4}s?\b)')
     year_match = year_pattern.search(title)
-
     year = ''
     year_position = -1
     if year_match:
-        year = year_match.group(0)  # Extract the year or decade (e.g., 1999 or 1950s)
-        year_position = year_match.start()  # Get the position of the year in the string
-
-    # If year is found, split the title into parts: before and after the year
+        year = year_match.group(0)
+        year_position = year_match.start()
     if year:
-        before_year = title[:year_position].strip()  # Title before the year
-        after_year = title[year_position + len(year):].strip()  # Title after the year (if any)
-        title_without_year = before_year + " " + after_year  # Combine both parts without year
+        before_year = title[:year_position].strip()
+        after_year = title[year_position + len(year):].strip()
+        title_without_year = before_year + " " + after_year
     else:
-        title_without_year = title  # If no year is found, treat the whole title normally
-
-    # Reconstruct the title by placing the year back in its original position
+        title_without_year = title
     if year:
         final_title = title_without_year[:year_position].strip() + " " + year + " " + title_without_year[
                                                                                       year_position:].strip()
         final_title = final_title.strip()
     else:
         final_title = title_without_year.strip()
-
-    final_title_length = len(final_title)  # +1 for the space before the year
+    final_title_length = len(final_title)
     words = final_title.split()
-
-    # Check if initial title length is 80 or more
     if final_title_length >= 80:
         words = final_title.split()
-
-        # Step 1: Remove "Vintage" and "Postcard" if they exist in the list
         words = [word for word in words if word not in ["Vintage", "Postcard", "Antique"]]
         final_title = ' '.join(words)
         final_title_length = len(final_title.strip())
-
-        # Step 2: If still over 80, keep removing the first word until the title is under 80 characters
         while final_title_length > 80 and words:
             words.pop(0)
             final_title = ' '.join(words)
             final_title_length = len(final_title.strip())
-
     logging.debug(f"Cleaned title: {final_title}")
     return final_title
 
 
 def convert_to_html(text):
-    # Escape special HTML characters
     text = html.escape(text)
-    # Split text into paragraphs by splitting on double newlines
     paragraphs = text.split('\n\n')
-    # Wrap each paragraph in <p> tags, replacing single newlines with <br>
     html_paragraphs = ['<p>{}</p>'.format(paragraph.replace('\n', '<br>')) for paragraph in paragraphs]
-    # Join the paragraphs
     return ''.join(html_paragraphs)
 
 
 def remove_code_from_url(url):
-    # Remove the dynamic "xx-001" segment from the URL
     return re.sub(r'(archives/)[^/]+/', r'\1', url)
 
 
@@ -161,131 +131,91 @@ def save_postcards_to_csv(postcards_details, all_rows):
                "Country", "City",
                "Era",
                "Description"]
-
     boilerplate = """Please inspect the scanned postcard image for condition. All cards are sold as is. Payment is due within 3 days of purchase or we may re-list it for other buyers. Please note we offer VOLUME DISCOUNTS (2 for 10%, 3 for 15%, 4 for 20%, and 10+ for 30%) so please check out our massive store selection. We have 1,000s of cards in stock with views from nearly every state and country, all used with messages, stamps, interesting postal routes, and more. Thank you so much for visiting postal*connection, you are appreciated.
      Use code with caution.
     PS - WE BUY POSTCARDS! Top prices paid for good collections.
     """
-
     for postcard in postcards_details:
         logging.debug(f"Processing postcard with original index: {postcard.get('original_index')}")
-
         try:
             details = json.loads(postcard["details"])
         except json.JSONDecodeError:
             logging.error(
                 f"JSONDecodeError for postcard with original index: {postcard.get('original_index')}. Details: {postcard.get('details')}")
             details = {"Title": "", "Region": "", "Country": "", "City": "", "Era": "", "Description": "",
-                       "Origin City": "", "Destination City": ""}  # Set default values
-
+                       "Origin City": "", "Destination City": ""}
         title = details.get("Title", "")
         city = details.get("City", "")
         description = details.get("Description", "").strip()
         total_description = f"{description}\n\n{boilerplate}" if description else boilerplate
-
-        # Convert the total_description to HTML
         total_description_html = convert_to_html(total_description)
-
         cleaned_title = clean_title(title, city)
-
-        # Stuff title with origin and destination
         origin = details.get("Origin City", "")
         logging.debug(f"Origin: {origin}")
         destination = details.get("Destination City", "")
         logging.debug(f"Destination: {destination}")
 
-        # Use the globally loaded first_column_set for validation
         def check_variable(variable_to_check):
             return variable_to_check.lower() in first_column_set
 
         def validate_destination(destination):
             if not destination:
                 return ""
-            # Use regex to split destination into location and state code parts
             match = re.match(r"^(.*?)(?=\s[A-Z]{2}$)", destination)
-
             if match:
-                location = match.group(1).strip()  # Extract the location part
+                location = match.group(1).strip()
                 logging.debug(f"Location from Destination: {location}")
-                state_code = destination[len(location):].strip()  # Extract the state code part
+                state_code = destination[len(location):].strip()
                 logging.debug(f"State code from Destination: {state_code}")
-                if check_variable(location):  # Run the validity check on the location
-                    # Reconstruct and return if valid
+                if check_variable(location):
                     return f"{location.title()} {state_code}"
-            return ""  # Return an empty string if invalid
+            return ""
 
         if check_variable(origin):
             origin = origin
         else:
             origin = ""
-
         destination = validate_destination(destination)
         logging.debug(f"Validated Destination: {destination}")
-
-        if origin and origin.lower() != city.lower():  # Ensure origin is not empty before comparison
-            # Step 1: Generate the full titles
+        if origin and origin.lower() != city.lower():
             cancel_title = f"{origin} {cleaned_title}"
         else:
             cancel_title = ""
-
         if destination != "":
             destination_title = f"{cleaned_title} to {destination}"
         else:
             destination_title = ""
-
-        # Step 2: Truncate cancel_title if it exceeds 80 characters
         if len(cancel_title) >= 80:
             cancel_words = cancel_title.split()
-
-            # Remove "Vintage" and "Postcard" if present
             cancel_words = [word for word in cancel_words if word not in ["Vintage", "Postcard", "Antique"]]
-
-            # Remove duplicate words past the first mention, case-insensitively
             seen_words = set()
             unique_cancel_words = []
             for word in cancel_words:
-                lower_word = word.lower()  # Convert word to lowercase for comparison
+                lower_word = word.lower()
                 if lower_word not in seen_words:
-                    unique_cancel_words.append(word)  # Keep the original casing
+                    unique_cancel_words.append(word)
                     seen_words.add(lower_word)
-
-            # Truncate from the beginning until the title is under 80 characters
             while len(' '.join(unique_cancel_words)) >= 80 and unique_cancel_words:
                 unique_cancel_words.pop(0)
-
             cancel_title = ' '.join(unique_cancel_words) if len(' '.join(unique_cancel_words)) < 80 else ""
-
-        # Step 3: Truncate destination_title if it exceeds 80 characters
         if len(destination_title) >= 80:
             destination_words = destination_title.split()
-            # Remove "Vintage" and "Postcard" if present
             destination_words = [word for word in destination_words if word not in ["Vintage", "Postcard", "Antique"]]
-            # Truncate from the beginning until the title is under 80 characters
             while len(' '.join(destination_words)) >= 80 and destination_words:
                 destination_words.pop(0)
             destination_title = ' '.join(destination_words) if len(' '.join(destination_words)) < 80 else ""
-
         if cancel_title != "":
             cleaned_title = cancel_title
-
-        # Results
         logging.debug(f"Cancel Title: {cancel_title}")
         logging.debug(f"Destination Title: {destination_title}")
-
         front_image_link = postcard.get("front_image_link", "")
         back_image_link = postcard.get("back_image_link", "")
-
         try:
-            # take what comes *after* "/archives/"
             after_archives = front_image_link.split("/archives/", 1)[1]
-            # then take everything *before* the next "/"
             SKU = after_archives.split("/", 1)[0]
         except IndexError:
-            # either "/archives/" wasn’t there or there was no trailing segment
             SKU = "NOSKU"
-
         combo_title = destination_title if destination_title else cleaned_title
-
         row = {
             "front_image_link": front_image_link,
             "back_image_link": back_image_link,
@@ -297,10 +227,9 @@ def save_postcards_to_csv(postcards_details, all_rows):
             "Country": details.get("Country", ""),
             "City": details.get("City", ""),
             "Era": details.get("Era", ""),
-            "Description": total_description_html  # Use the HTML-formatted description
+            "Description": total_description_html
         }
         all_rows.append(row)
-
     logging.info(f"save_postcards_to_csv completed.")
     return all_rows
 
@@ -308,29 +237,16 @@ def save_postcards_to_csv(postcards_details, all_rows):
 def clean_text(text):
     if pd.isnull(text):
         return ''
-
-    # Define a dictionary of common alternate characters to replace
     replacements = {
         '‘': "'", '’': "'", '“': '"', '”': '"', '–': '-', '—': '-',
         '…': '...', '«': '"', '»': '"', '‹': "'", '›': "'"
     }
-
-    # Normalize the text to decompose accents
     text = unicodedata.normalize('NFKD', str(text))
-
-    # Decode HTML entities like & to their actual characters
     text = html.unescape(text)
-
-    # Replace any alternate characters with their standard ASCII equivalents
     for alt_char, standard_char in replacements.items():
         text = text.replace(alt_char, standard_char)
-
-    # Remove nonspacing marks (accents) after normalization.
     text = ''.join(c for c in text if unicodedata.category(c) != 'Mn')
-
-    # Remove unwanted symbols, keeping basic punctuation and alphanumeric characters
     text = re.sub(r'[^A-Za-z0-9\s.,?!\'"()%<>-_/]', '', text)
-
     return text
 
 
@@ -347,7 +263,6 @@ def download_images_from_links(links, tmp_dir):
     logging.info("Starting download_images_from_links")
     postcards = []
     total_links = len(links)
-
     postcards_lock = threading.Lock()
     downloaded_count = 0
 
@@ -362,8 +277,6 @@ def download_images_from_links(links, tmp_dir):
             front_image_path = os.path.join(tmp_dir, front_image_filename)
             with open(front_image_path, "wb") as f:
                 f.write(front_response.content)
-
-            # Download back image if available
             back_link = None
             back_image_filename = None
             back_image_path = None
@@ -376,7 +289,6 @@ def download_images_from_links(links, tmp_dir):
                 back_image_path = os.path.join(tmp_dir, back_image_filename)
                 with open(back_image_path, "wb") as f:
                     f.write(back_response.content)
-
             with postcards_lock:
                 postcards.append({
                     "original_index": idx // 2,
@@ -388,7 +300,6 @@ def download_images_from_links(links, tmp_dir):
                     "back_image_link": back_link
                 })
             logging.debug(f"Finished downloading images for index {idx}")
-
         except Exception as e:
             logging.error(f"Failed to download images at index {idx}: {e}")
             with postcards_lock:
@@ -412,7 +323,6 @@ def download_images_from_links(links, tmp_dir):
         futures = [executor.submit(download_pair, idx) for idx in range(0, total_links, 2)]
         for future in as_completed(futures):
             pass
-
     logging.info("Finished download_images_from_links")
     return sorted(postcards, key=lambda x: x["original_index"])
 
@@ -434,7 +344,6 @@ def get_postcard_details(api_key, front_image_path, back_image_path, timeout=20,
     for attempt in range(max_retries):
         logging.info(f"Attempt {attempt + 1}/{max_retries} for primary details: {os.path.basename(front_image_path)}")
         result = DEFAULT_DETAILS_RESPONSE
-
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             future = executor.submit(api_call)
             try:
@@ -451,7 +360,6 @@ def get_postcard_details(api_key, front_image_path, back_image_path, timeout=20,
             except Exception as e:
                 logging.error(
                     f"Exception on attempt {attempt + 1} in get_postcard_details for: {os.path.basename(front_image_path)}. Error: {e}")
-
         if attempt < max_retries - 1:
             logging.info(f"Waiting {retry_delay} seconds before next attempt...")
             time.sleep(retry_delay)
@@ -464,12 +372,10 @@ def get_postcard_details(api_key, front_image_path, back_image_path, timeout=20,
 def _get_postcard_details_helper(api_key, front_image_path, back_image_path):
     front_image_base64 = encode_image(front_image_path)
     back_image_base64 = encode_image(back_image_path)
-
     if front_image_base64 is None or back_image_base64 is None:
         logging.error(
             f"Could not encode one of the images for API call in _get_postcard_details_helper. Front: {front_image_path}, Back: {back_image_path}")
         return DEFAULT_DETAILS_RESPONSE
-
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}"
@@ -573,7 +479,6 @@ def _get_postcard_details_helper(api_key, front_image_path, back_image_path):
     The short title can be creatively made, using same formatting guidelines, just make sure it is 1-2 words shorter than the actual first title you wrote.
     Make sure to carefully analyze the **text on the back** of the postcard as well, since it may contain valuable information like the city, region, or country.
     """
-
     payload = {
         "model": "gpt-4.1",
         "messages": [
@@ -603,7 +508,6 @@ def _get_postcard_details_helper(api_key, front_image_path, back_image_path):
         ],
         "max_tokens": 300,
     }
-
     try:
         response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
         response.raise_for_status()
@@ -633,7 +537,6 @@ def get_secondary_postcard_details(api_key, front_image_path, back_image_path, t
     for attempt in range(max_retries):
         logging.info(f"Attempt {attempt + 1}/{max_retries} for secondary details: {os.path.basename(front_image_path)}")
         result = DEFAULT_SECONDARY_RESPONSE
-
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             future = executor.submit(api_call)
             try:
@@ -650,7 +553,6 @@ def get_secondary_postcard_details(api_key, front_image_path, back_image_path, t
             except Exception as e:
                 logging.error(
                     f"Exception on attempt {attempt + 1} in get_secondary_postcard_details for: {os.path.basename(front_image_path)}. Error: {e}")
-
         if attempt < max_retries - 1:
             logging.info(f"Waiting {retry_delay} seconds before next attempt...")
             time.sleep(retry_delay)
@@ -663,12 +565,10 @@ def get_secondary_postcard_details(api_key, front_image_path, back_image_path, t
 def _get_secondary_postcard_details_helper(api_key, front_image_path, back_image_path):
     front_image_base64 = encode_image(front_image_path)
     back_image_base64 = encode_image(back_image_path)
-
     if front_image_base64 is None or back_image_base64 is None:
         logging.error(
             f"Could not encode one of the images for API call in _get_secondary_postcard_details_helper. Front: {front_image_path}, Back: {back_image_path}")
         return '{"Destination City": "", "Origin City": ""}'
-
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}"
@@ -728,7 +628,6 @@ def _get_secondary_postcard_details_helper(api_key, front_image_path, back_image
 
     Make sure to carefully analyze the **text on the back** of the postcard as well, since it may contain valuable information.
     """
-
     payload = {
         "model": "gpt-4.1",
         "messages": [
@@ -902,16 +801,18 @@ def upload_to_mongodb(job_id: str, original_links: List[str], csv_data_bytes: by
         db = client[MONGO_DB_NAME]
         collection = db[MONGO_COLLECTION_NAME]
 
-        # Ensure the job_id is unique or handle updates
-        document = {
-            "job_id": job_id,
-            "original_links": original_links,
-            "csv_data": base64.b64encode(csv_data_bytes).decode('utf-8'),
-            "timestamp": datetime.utcnow(),
-            "status": "completed",
-            "filename": f"postcards_job_{job_id}.csv"
-        }
-        collection.replace_one({"job_id": job_id}, document, upsert=True)  # Use replace_one for idempotency
+        # Use update_one to update the existing job document (or upsert if it somehow doesn't exist)
+        # This is where the CSV data and 'completed' status are added/updated.
+        collection.update_one(
+            {"job_id": job_id},
+            {"$set": {
+                "csv_data": base64.b64encode(csv_data_bytes).decode('utf-8'),
+                "timestamp": datetime.utcnow(),
+                "status": "completed",
+                # "filename" is already set at the initial insert
+            }},
+            upsert=True  # If the job_id doesn't exist for some reason, create it.
+        )
         logging.info(f"Job {job_id} CSV data successfully uploaded to MongoDB.")
         client.close()
     except Exception as e:
@@ -938,27 +839,26 @@ class JobStatusResponse(BaseModel):
     status: str
     timestamp: datetime
     filename: str
-    original_links: List[str]
+    original_links: Optional[List[str]] = None  # <-- FIX: Make original_links Optional
     error_message: Optional[str] = None
-
-    # This is needed to handle ObjectId from PyMongo if we were to return the raw MongoDB document
-    # For now, we're explicitly converting to string for job_id, but it's good practice.
-    # class Config:
-    #     json_encoders = {ObjectId: str}
 
 
 # Main processing function to be called as a background task
 async def process_job_and_upload(job_id: str, links: List[str]):
     logging.info(f"Starting processing job {job_id} for {len(links)} links.")
     all_rows = []
-    job_status_update = {"status": "processing", "timestamp": datetime.utcnow()}
     try:
         client = get_mongo_client()
         db = client[MONGO_DB_NAME]
         collection = db[MONGO_COLLECTION_NAME]
-        # Initial status update
-        collection.replace_one({"job_id": job_id}, {"$set": job_status_update, "original_links": links,
-                                                    "filename": f"postcards_job_{job_id}.csv"}, upsert=True)
+
+        # FIX: Change from replace_one to update_one for initial status within the background task
+        # This updates the document that was already created with "pending" status by the endpoint.
+        collection.update_one(
+            {"job_id": job_id},
+            {"$set": {"status": "processing", "timestamp": datetime.utcnow()}},
+            upsert=True  # Only upsert if it *really* doesn't exist, but it should.
+        )
         client.close()
 
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -980,6 +880,15 @@ async def process_job_and_upload(job_id: str, links: List[str]):
 
         if not all_rows:
             logging.warning(f"No data generated for job {job_id}. Skipping CSV generation and MongoDB upload.")
+            # Update status to reflect no data
+            client = get_mongo_client()
+            db = client[MONGO_DB_NAME]
+            collection = db[MONGO_COLLECTION_NAME]
+            collection.update_one(
+                {"job_id": job_id},
+                {"$set": {"status": "completed_no_data", "timestamp": datetime.utcnow()}},
+            )
+            client.close()
             return
 
         df = pd.DataFrame(all_rows)
@@ -1014,7 +923,7 @@ async def process_job_and_upload(job_id: str, links: List[str]):
             logging.error(f"Failed to update job {job_id} status to 'failed' in DB: {db_e}")
 
 
-import uuid  # For generating unique job IDs
+import uuid
 
 
 # API endpoint to submit a processing job
@@ -1038,10 +947,12 @@ async def process_postcards_endpoint(request: ProcessJobRequest, background_task
             "job_id": job_id,
             "original_links": request.links,
             "timestamp": datetime.utcnow(),
-            "status": "pending",  # Initial status
+            "status": "pending",
             "filename": f"postcards_job_{job_id}.csv",
             "csv_data": ""  # Placeholder, will be filled by background task
         }
+        # FIX: Use insert_one for initial creation or replace_one if idempotency is needed before update
+        # insert_one is simpler here as job_id is new.
         collection.insert_one(initial_status_doc)
         client.close()
     except Exception as e:
@@ -1055,7 +966,7 @@ async def process_postcards_endpoint(request: ProcessJobRequest, background_task
         status="pending",
         timestamp=datetime.utcnow(),
         filename=f"postcards_job_{job_id}.csv",
-        original_links=request.links
+        original_links=request.links  # original_links is included in the response when submitting a job
     )
 
 
@@ -1066,7 +977,7 @@ async def get_job_status(job_id: str):
         client = get_mongo_client()
         db = client[MONGO_DB_NAME]
         collection = db[MONGO_COLLECTION_NAME]
-        # Exclude 'csv_data' for status checks to keep responses light
+        # FIX: Include original_links in this specific lookup as it's for detailed status
         job_document = collection.find_one({"job_id": job_id}, {"_id": 0, "csv_data": 0})
         client.close()
 
@@ -1086,8 +997,8 @@ async def list_jobs():
         client = get_mongo_client()
         db = client[MONGO_DB_NAME]
         collection = db[MONGO_COLLECTION_NAME]
-        # Exclude 'csv_data' and 'original_links' for listing all jobs to keep responses light
-        jobs_cursor = collection.find({}, {"_id": 0, "csv_data": 0, "original_links": 0}).sort("timestamp", -1)
+        # FIX: Exclude 'original_links' here, as it's now Optional in the Pydantic model
+        jobs_cursor = collection.find({}, {"_id": 0, "csv_data": 0}).sort("timestamp", -1)
         jobs_list = []
         for doc in jobs_cursor:
             jobs_list.append(JobStatusResponse(**doc))
@@ -1118,14 +1029,13 @@ async def download_job_csv(job_id: str):
         csv_bytes = base64.b64decode(csv_data_base64)
         filename = job_document.get("filename", f"postcards_job_{job_id}.csv")
 
-        # Return as StreamingResponse to handle bytes data
         return StreamingResponse(
             io.BytesIO(csv_bytes),
             media_type="text/csv",
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
 
-    except HTTPException:  # Re-raise FastAPI HTTPExceptions
+    except HTTPException:
         raise
     except Exception as e:
         logging.error(f"Error downloading CSV for job {job_id}: {e}")
