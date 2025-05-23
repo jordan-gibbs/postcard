@@ -24,10 +24,13 @@ from pymongo.errors import ConnectionFailure, OperationFailure
 from datetime import datetime
 from bson import ObjectId
 
+# --- Timezone Imports ---
+import pytz  # Added for timezone conversion
+
 # --- FastAPI Imports ---
 from fastapi import FastAPI, HTTPException, BackgroundTasks, status
 from pydantic import BaseModel, Field
-from typing import List, Optional  # Import Optional
+from typing import List, Optional
 from fastapi.responses import FileResponse, StreamingResponse
 import io
 
@@ -801,15 +804,14 @@ def upload_to_mongodb(job_id: str, original_links: List[str], csv_data_bytes: by
         db = client[MONGO_DB_NAME]
         collection = db[MONGO_COLLECTION_NAME]
 
-        # Use update_one to update the existing job document (or upsert if it somehow doesn't exist)
-        # This is where the CSV data and 'completed' status are added/updated.
+        # Use update_one to update the existing job document created in the endpoint
         collection.update_one(
             {"job_id": job_id},
             {"$set": {
                 "csv_data": base64.b64encode(csv_data_bytes).decode('utf-8'),
-                "timestamp": datetime.utcnow(),
+                "timestamp": datetime.utcnow(),  # Store in UTC
                 "status": "completed",
-                # "filename" is already set at the initial insert
+                # "filename" and "original_links" are already set at the initial insert
             }},
             upsert=True  # If the job_id doesn't exist for some reason, create it.
         )
@@ -837,9 +839,9 @@ class ProcessJobRequest(BaseModel):
 class JobStatusResponse(BaseModel):
     job_id: str
     status: str
-    timestamp: datetime
+    timestamp: datetime  # Will be converted to Eastern Time for response
     filename: str
-    original_links: Optional[List[str]] = None  # <-- FIX: Make original_links Optional
+    original_links: Optional[List[str]] = None  # Made optional for listing endpoint
     error_message: Optional[str] = None
 
 
@@ -852,12 +854,11 @@ async def process_job_and_upload(job_id: str, links: List[str]):
         db = client[MONGO_DB_NAME]
         collection = db[MONGO_COLLECTION_NAME]
 
-        # FIX: Change from replace_one to update_one for initial status within the background task
-        # This updates the document that was already created with "pending" status by the endpoint.
+        # FIX: Change to update_one with $set for modifying existing document
         collection.update_one(
             {"job_id": job_id},
-            {"$set": {"status": "processing", "timestamp": datetime.utcnow()}},
-            upsert=True  # Only upsert if it *really* doesn't exist, but it should.
+            {"$set": {"status": "processing", "timestamp": datetime.utcnow()}},  # Update timestamp to processing start
+            upsert=True  # Though it should already exist from process_postcards_endpoint
         )
         client.close()
 
@@ -880,7 +881,6 @@ async def process_job_and_upload(job_id: str, links: List[str]):
 
         if not all_rows:
             logging.warning(f"No data generated for job {job_id}. Skipping CSV generation and MongoDB upload.")
-            # Update status to reflect no data
             client = get_mongo_client()
             db = client[MONGO_DB_NAME]
             collection = db[MONGO_COLLECTION_NAME]
@@ -904,7 +904,7 @@ async def process_job_and_upload(job_id: str, links: List[str]):
         ebay_ready_df.to_csv(csv_buffer, index=False)
         csv_data_bytes = csv_buffer.getvalue().encode('utf-8')
 
-        upload_to_mongodb(job_id, links, csv_data_bytes)  # Pass original full links
+        upload_to_mongodb(job_id, links, csv_data_bytes)
         logging.info(f"Job {job_id} successfully completed and uploaded.")
 
     except Exception as e:
@@ -925,6 +925,9 @@ async def process_job_and_upload(job_id: str, links: List[str]):
 
 import uuid
 
+# Define the Eastern Timezone for conversion
+EASTERN_TIMEZONE = pytz.timezone('America/New_York')
+
 
 # API endpoint to submit a processing job
 @app.post("/process-postcards", response_model=JobStatusResponse)
@@ -938,7 +941,8 @@ async def process_postcards_endpoint(request: ProcessJobRequest, background_task
     job_id = str(uuid.uuid4())
     logging.info(f"Received request for new job: {job_id}")
 
-    # Initial status update in DB for the job, before background task starts
+    current_utc_time = datetime.utcnow()
+
     try:
         client = get_mongo_client()
         db = client[MONGO_DB_NAME]
@@ -946,13 +950,11 @@ async def process_postcards_endpoint(request: ProcessJobRequest, background_task
         initial_status_doc = {
             "job_id": job_id,
             "original_links": request.links,
-            "timestamp": datetime.utcnow(),
+            "timestamp": current_utc_time,  # Stored in UTC
             "status": "pending",
             "filename": f"postcards_job_{job_id}.csv",
-            "csv_data": ""  # Placeholder, will be filled by background task
+            "csv_data": ""
         }
-        # FIX: Use insert_one for initial creation or replace_one if idempotency is needed before update
-        # insert_one is simpler here as job_id is new.
         collection.insert_one(initial_status_doc)
         client.close()
     except Exception as e:
@@ -961,12 +963,15 @@ async def process_postcards_endpoint(request: ProcessJobRequest, background_task
 
     background_tasks.add_task(process_job_and_upload, job_id, request.links)
 
+    # Convert timestamp to Eastern Time for the response model
+    eastern_time = current_utc_time.replace(tzinfo=pytz.utc).astimezone(EASTERN_TIMEZONE)
+
     return JobStatusResponse(
         job_id=job_id,
         status="pending",
-        timestamp=datetime.utcnow(),
+        timestamp=eastern_time,  # Send Eastern Time in response
         filename=f"postcards_job_{job_id}.csv",
-        original_links=request.links  # original_links is included in the response when submitting a job
+        original_links=request.links
     )
 
 
@@ -977,11 +982,15 @@ async def get_job_status(job_id: str):
         client = get_mongo_client()
         db = client[MONGO_DB_NAME]
         collection = db[MONGO_COLLECTION_NAME]
-        # FIX: Include original_links in this specific lookup as it's for detailed status
         job_document = collection.find_one({"job_id": job_id}, {"_id": 0, "csv_data": 0})
         client.close()
 
         if job_document:
+            # Convert UTC timestamp from DB to Eastern Time for the response
+            if 'timestamp' in job_document and isinstance(job_document['timestamp'], datetime):
+                utc_time = job_document['timestamp'].replace(tzinfo=pytz.utc)
+                job_document['timestamp'] = utc_time.astimezone(EASTERN_TIMEZONE)
+
             return JobStatusResponse(**job_document)
         else:
             raise HTTPException(status_code=404, detail="Job not found.")
@@ -997,10 +1006,14 @@ async def list_jobs():
         client = get_mongo_client()
         db = client[MONGO_DB_NAME]
         collection = db[MONGO_COLLECTION_NAME]
-        # FIX: Exclude 'original_links' here, as it's now Optional in the Pydantic model
-        jobs_cursor = collection.find({}, {"_id": 0, "csv_data": 0}).sort("timestamp", -1)
+        # Exclude 'csv_data' and 'original_links' for listing all jobs to keep responses light
+        jobs_cursor = collection.find({}, {"_id": 0, "csv_data": 0, "original_links": 0}).sort("timestamp", -1)
         jobs_list = []
         for doc in jobs_cursor:
+            # Convert UTC timestamp from DB to Eastern Time for the response
+            if 'timestamp' in doc and isinstance(doc['timestamp'], datetime):
+                utc_time = doc['timestamp'].replace(tzinfo=pytz.utc)
+                doc['timestamp'] = utc_time.astimezone(EASTERN_TIMEZONE)
             jobs_list.append(JobStatusResponse(**doc))
         client.close()
         return jobs_list
