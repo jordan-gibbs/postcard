@@ -306,117 +306,8 @@ def encode_image(image_path):
         return None
 
 
-def download_images_from_links(links, tmp_dir):
-    logging.info("Starting download_images_from_links")
-    postcards = []
-    total_links = len(links)
-    postcards_lock = threading.Lock()
-    downloaded_count = 0
 
-    def download_pair(idx):
-        nonlocal downloaded_count
-        try:
-            front_link = links[idx]
-            logging.debug(f"Downloading front image from: {front_link}")
-            front_response = requests.get(front_link)
-            front_response.raise_for_status()
-            front_image_filename = f"image_{idx:03d}.jpg"
-            front_image_path = os.path.join(tmp_dir, front_image_filename)
-            with open(front_image_path, "wb") as f:
-                f.write(front_response.content)
-            back_link = None
-            back_image_filename = None
-            back_image_path = None
-            if idx + 1 < len(links):
-                back_link = links[idx + 1]
-                logging.debug(f"Downloading back image from: {back_link}")
-                back_response = requests.get(back_link)
-                back_response.raise_for_status()
-                back_image_filename = f"image_{idx + 1:03d}.jpg"
-                back_image_path = os.path.join(tmp_dir, back_image_filename)
-                with open(back_image_path, "wb") as f:
-                    f.write(back_response.content)
-            with postcards_lock:
-                postcards.append({
-                    "original_index": idx // 2,
-                    "front_image_filename": front_image_filename,
-                    "back_image_filename": back_image_filename,
-                    "front_image_path": front_image_path,
-                    "back_image_path": back_image_path,
-                    "front_image_link": front_link,
-                    "back_image_link": back_link
-                })
-            logging.debug(f"Finished downloading images for index {idx}")
-        except Exception as e:
-            logging.error(f"Failed to download images at index {idx}: {e}")
-            with postcards_lock:
-                postcards.append({
-                    "original_index": idx // 2,
-                    "front_image_filename": "",
-                    "back_image_filename": "",
-                    "front_image_path": "",
-                    "back_image_path": "",
-                    "front_image_link": front_link,
-                    "back_image_link": None
-                })
-        finally:
-            with threading.Lock():
-                downloaded_count += 2
-                progress_percentage = downloaded_count / total_links
-                logging.info(f"Download progress: {int(progress_percentage * 100)}%")
-
-    max_workers = min(20, (len(links) + 1) // 2)
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [executor.submit(download_pair, idx) for idx in range(0, total_links, 2)]
-        for future in as_completed(futures):
-            pass
-    logging.info("Finished download_images_from_links")
-    return sorted(postcards, key=lambda x: x["original_index"])
-
-
-DEFAULT_DETAILS_RESPONSE = '{"Title": "", "Region": "", "Country": "", "City": "", "Era": "", "Description": ""}'
-DEFAULT_SECONDARY_RESPONSE = '{"Destination City": "", "Origin City": ""}'
-
-
-def get_postcard_details(api_key, front_image_path, back_image_path, timeout=20, max_workers=100, max_retries=3,
-                         retry_delay=5):
-    logging.debug(f"Starting get_postcard_details for front image: {os.path.basename(front_image_path)}")
-    if not api_key:
-        logging.error("OpenAI API key is not provided for primary details API call.")
-        return DEFAULT_DETAILS_RESPONSE
-
-    def api_call():
-        return _get_postcard_details_gemini(api_key, front_image_path, back_image_path)
-
-    for attempt in range(max_retries):
-        logging.info(f"Attempt {attempt + 1}/{max_retries} for primary details: {os.path.basename(front_image_path)}")
-        result = DEFAULT_DETAILS_RESPONSE
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future = executor.submit(api_call)
-            try:
-                result = future.result(timeout=timeout)
-                if result != DEFAULT_DETAILS_RESPONSE:
-                    logging.debug(
-                        f"Success on attempt {attempt + 1}. get_postcard_details completed for: {os.path.basename(front_image_path)}")
-                    return result
-                logging.warning(
-                    f"Attempt {attempt + 1} failed (helper returned default response) for primary details: {os.path.basename(front_image_path)}")
-            except concurrent.futures.TimeoutError:
-                logging.warning(
-                    f"Timeout occurred on attempt {attempt + 1} in get_postcard_details for: {os.path.basename(front_image_path)}")
-            except Exception as e:
-                logging.error(
-                    f"Exception on attempt {attempt + 1} in get_postcard_details for: {os.path.basename(front_image_path)}. Error: {e}")
-        if attempt < max_retries - 1:
-            logging.info(f"Waiting {retry_delay} seconds before next attempt...")
-            time.sleep(retry_delay)
-        else:
-            logging.error(
-                f"All {max_retries} attempts failed for primary details: {os.path.basename(front_image_path)}. Returning default response.")
-    return DEFAULT_DETAILS_RESPONSE
-
-
-def get_postcard_details_gemini(front_image_path: str, back_image_path: str) -> str:
+def _get_postcard_details_gemini(front_image_path: str, back_image_path: str) -> str:
     """
     Analyzes front and back postcard images using the Gemini SDK and returns details
     in a structured JSON format.
@@ -777,14 +668,6 @@ def _get_secondary_postcard_details_gemini(api_key, front_image_path, back_image
         return DEFAULT_DETAILS_RESPONSE
 
 
-    if front_image_base64 is None or back_image_base64 is None:
-        logging.error(
-            f"Could not encode one of the images for API call in _get_secondary_postcard_details_helper. Front: {front_image_path}, Back: {back_image_path}")
-        return '{"Destination City": "", "Origin City": ""}'
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
-    }
     prompt = """
     You are given two images of a vintage or antique postcard:
 
@@ -968,6 +851,118 @@ def _get_secondary_postcard_details_helper(api_key, front_image_path, back_image
     except Exception as e:
         logging.error(f"Exception in _get_secondary_postcard_details_helper, skipping call. Error: {e}")
         return '{"Destination City": "", "Origin City": ""}'
+
+
+
+def download_images_from_links(links, tmp_dir):
+    logging.info("Starting download_images_from_links")
+    postcards = []
+    total_links = len(links)
+    postcards_lock = threading.Lock()
+    downloaded_count = 0
+
+    def download_pair(idx):
+        nonlocal downloaded_count
+        try:
+            front_link = links[idx]
+            logging.debug(f"Downloading front image from: {front_link}")
+            front_response = requests.get(front_link)
+            front_response.raise_for_status()
+            front_image_filename = f"image_{idx:03d}.jpg"
+            front_image_path = os.path.join(tmp_dir, front_image_filename)
+            with open(front_image_path, "wb") as f:
+                f.write(front_response.content)
+            back_link = None
+            back_image_filename = None
+            back_image_path = None
+            if idx + 1 < len(links):
+                back_link = links[idx + 1]
+                logging.debug(f"Downloading back image from: {back_link}")
+                back_response = requests.get(back_link)
+                back_response.raise_for_status()
+                back_image_filename = f"image_{idx + 1:03d}.jpg"
+                back_image_path = os.path.join(tmp_dir, back_image_filename)
+                with open(back_image_path, "wb") as f:
+                    f.write(back_response.content)
+            with postcards_lock:
+                postcards.append({
+                    "original_index": idx // 2,
+                    "front_image_filename": front_image_filename,
+                    "back_image_filename": back_image_filename,
+                    "front_image_path": front_image_path,
+                    "back_image_path": back_image_path,
+                    "front_image_link": front_link,
+                    "back_image_link": back_link
+                })
+            logging.debug(f"Finished downloading images for index {idx}")
+        except Exception as e:
+            logging.error(f"Failed to download images at index {idx}: {e}")
+            with postcards_lock:
+                postcards.append({
+                    "original_index": idx // 2,
+                    "front_image_filename": "",
+                    "back_image_filename": "",
+                    "front_image_path": "",
+                    "back_image_path": "",
+                    "front_image_link": front_link,
+                    "back_image_link": None
+                })
+        finally:
+            with threading.Lock():
+                downloaded_count += 2
+                progress_percentage = downloaded_count / total_links
+                logging.info(f"Download progress: {int(progress_percentage * 100)}%")
+
+    max_workers = min(20, (len(links) + 1) // 2)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(download_pair, idx) for idx in range(0, total_links, 2)]
+        for future in as_completed(futures):
+            pass
+    logging.info("Finished download_images_from_links")
+    return sorted(postcards, key=lambda x: x["original_index"])
+
+
+DEFAULT_DETAILS_RESPONSE = '{"Title": "", "Region": "", "Country": "", "City": "", "Era": "", "Description": ""}'
+DEFAULT_SECONDARY_RESPONSE = '{"Destination City": "", "Origin City": ""}'
+
+
+def get_postcard_details(api_key, front_image_path, back_image_path, timeout=20, max_workers=100, max_retries=3,
+                         retry_delay=5):
+    logging.debug(f"Starting get_postcard_details for front image: {os.path.basename(front_image_path)}")
+    if not api_key:
+        logging.error("OpenAI API key is not provided for primary details API call.")
+        return DEFAULT_DETAILS_RESPONSE
+
+    def api_call():
+        return _get_postcard_details_gemini(api_key, front_image_path, back_image_path)
+
+    for attempt in range(max_retries):
+        logging.info(f"Attempt {attempt + 1}/{max_retries} for primary details: {os.path.basename(front_image_path)}")
+        result = DEFAULT_DETAILS_RESPONSE
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future = executor.submit(api_call)
+            try:
+                result = future.result(timeout=timeout)
+                if result != DEFAULT_DETAILS_RESPONSE:
+                    logging.debug(
+                        f"Success on attempt {attempt + 1}. get_postcard_details completed for: {os.path.basename(front_image_path)}")
+                    return result
+                logging.warning(
+                    f"Attempt {attempt + 1} failed (helper returned default response) for primary details: {os.path.basename(front_image_path)}")
+            except concurrent.futures.TimeoutError:
+                logging.warning(
+                    f"Timeout occurred on attempt {attempt + 1} in get_postcard_details for: {os.path.basename(front_image_path)}")
+            except Exception as e:
+                logging.error(
+                    f"Exception on attempt {attempt + 1} in get_postcard_details for: {os.path.basename(front_image_path)}. Error: {e}")
+        if attempt < max_retries - 1:
+            logging.info(f"Waiting {retry_delay} seconds before next attempt...")
+            time.sleep(retry_delay)
+        else:
+            logging.error(
+                f"All {max_retries} attempts failed for primary details: {os.path.basename(front_image_path)}. Returning default response.")
+    return DEFAULT_DETAILS_RESPONSE
+
 
 
 def process_batch(api_key, batch):
