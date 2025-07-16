@@ -52,7 +52,6 @@ PostcardEra = Literal[
     "White Border (1915-1930)",
     "Linen (1930-1945)",
     "Photochrome (1945-now)",
-    ""  # Allow for an empty string if not found
 ]
 
 # Create the Pydantic model for the response schema
@@ -63,7 +62,7 @@ class PostcardDetails(BaseModel):
     Region: str = Field(description="U.S. state or region mentioned.")
     Country: str = Field(description="Country mentioned on the postcard.")
     City: str = Field(description="City or major landmark mentioned.")
-    Era: PostcardEra = Field(description="The postcard era from the provided list.")
+    Era: Optional[PostcardEra] = Field(description="The postcard era from the provided list.")
     Description: str = Field(description="Short description including sender/recipient details.")
 
 # Define a default response for error cases
@@ -73,7 +72,7 @@ DEFAULT_DETAILS_RESPONSE = PostcardDetails(
     Region="",
     Country="",
     City="",
-    Era="",
+    Era=None, # Use None instead of ""
     Description="Error processing postcard details."
 ).model_dump_json()
 
