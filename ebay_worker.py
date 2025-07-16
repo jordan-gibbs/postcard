@@ -91,6 +91,8 @@ MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
 MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "postcard_processing")
 MONGO_COLLECTION_NAME = os.getenv("MONGO_COLLECTION_NAME", "processed_files")
 
+GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY", "")
+
 # --- OpenAI API Key ---
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
@@ -323,7 +325,7 @@ def _get_postcard_details_gemini(front_image_path: str, back_image_path: str) ->
     """
     try:
         # The genai.Client() will automatically use the GOOGLE_API_KEY environment variable
-        client = genai.Client()
+        client = genai.Client(api_key=GEMINI_API_KEY)
 
         # Open image files
         img_front = Image.open(front_image_path)
@@ -620,7 +622,7 @@ def get_secondary_postcard_details(api_key, front_image_path, back_image_path, t
         return DEFAULT_SECONDARY_RESPONSE
 
     def api_call():
-        return _get_secondary_postcard_details_gemini(api_key, front_image_path, back_image_path)
+        return _get_secondary_postcard_details_gemini(front_image_path, back_image_path)
 
     for attempt in range(max_retries):
         logging.info(f"Attempt {attempt + 1}/{max_retries} for secondary details: {os.path.basename(front_image_path)}")
@@ -650,10 +652,10 @@ def get_secondary_postcard_details(api_key, front_image_path, back_image_path, t
     return DEFAULT_SECONDARY_RESPONSE
 
 
-def _get_secondary_postcard_details_gemini(api_key, front_image_path, back_image_path):
+def _get_secondary_postcard_details_gemini(front_image_path, back_image_path):
     try:
         # The genai.Client() will automatically use the GOOGLE_API_KEY environment variable
-        client = genai.Client()
+        client = genai.Client(api_key=GEMINI_API_KEY)
 
         # Open image files
         img_front = Image.open(front_image_path)
@@ -934,7 +936,7 @@ def get_postcard_details(api_key, front_image_path, back_image_path, timeout=20,
         return DEFAULT_DETAILS_RESPONSE
 
     def api_call():
-        return _get_postcard_details_gemini(api_key, front_image_path, back_image_path)
+        return _get_postcard_details_gemini(front_image_path, back_image_path)
 
     for attempt in range(max_retries):
         logging.info(f"Attempt {attempt + 1}/{max_retries} for primary details: {os.path.basename(front_image_path)}")
