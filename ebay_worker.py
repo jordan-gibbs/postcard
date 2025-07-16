@@ -34,6 +34,50 @@ from typing import List, Optional
 from fastapi.responses import FileResponse, StreamingResponse
 import io
 
+from pydantic import BaseModel, Field
+from typing import Literal
+
+from google import genai
+from google.genai import types
+import logging
+from PIL import Image
+import os
+import json
+
+
+# Define the allowed postcard eras for strict validation
+PostcardEra = Literal[
+    "Undivided Back (1901-1907)",
+    "Divided Back (1907-1915)",
+    "White Border (1915-1930)",
+    "Linen (1930-1945)",
+    "Photochrome (1945-now)",
+    ""  # Allow for an empty string if not found
+]
+
+# Create the Pydantic model for the response schema
+class PostcardDetails(BaseModel):
+    """Defines the schema for the postcard details JSON output."""
+    Title: str = Field(description="Descriptive title <= 65 chars. City in caps. Add RPPC if real photo.", max_length=65)
+    shortTitle: str = Field(description="A slightly shorter version of the title.")
+    Region: str = Field(description="U.S. state or region mentioned.")
+    Country: str = Field(description="Country mentioned on the postcard.")
+    City: str = Field(description="City or major landmark mentioned.")
+    Era: PostcardEra = Field(description="The postcard era from the provided list.")
+    Description: str = Field(description="Short description including sender/recipient details.")
+
+# Define a default response for error cases
+DEFAULT_DETAILS_RESPONSE = PostcardDetails(
+    Title="",
+    shortTitle="",
+    Region="",
+    Country="",
+    City="",
+    Era="",
+    Description="Error processing postcard details."
+).model_dump_json()
+
+
 # Configure logging
 LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
 logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
@@ -342,7 +386,7 @@ def get_postcard_details(api_key, front_image_path, back_image_path, timeout=20,
         return DEFAULT_DETAILS_RESPONSE
 
     def api_call():
-        return _get_postcard_details_helper(api_key, front_image_path, back_image_path)
+        return _get_postcard_details_gemini(api_key, front_image_path, back_image_path)
 
     for attempt in range(max_retries):
         logging.info(f"Attempt {attempt + 1}/{max_retries} for primary details: {os.path.basename(front_image_path)}")
@@ -370,6 +414,156 @@ def get_postcard_details(api_key, front_image_path, back_image_path, timeout=20,
             logging.error(
                 f"All {max_retries} attempts failed for primary details: {os.path.basename(front_image_path)}. Returning default response.")
     return DEFAULT_DETAILS_RESPONSE
+
+
+def get_postcard_details_gemini(front_image_path: str, back_image_path: str) -> str:
+    """
+    Analyzes front and back postcard images using the Gemini SDK and returns details
+    in a structured JSON format.
+
+    NOTE: This function assumes the GOOGLE_API_KEY environment variable is set.
+
+    Args:
+        front_image_path: The file path to the front image of the postcard.
+        back_image_path: The file path to the back image of the postcard.
+
+    Returns:
+        A JSON string containing the extracted postcard details.
+    """
+    try:
+        # The genai.Client() will automatically use the GOOGLE_API_KEY environment variable
+        client = genai.Client()
+
+        # Open image files
+        img_front = Image.open(front_image_path)
+        img_back = Image.open(back_image_path)
+
+    except FileNotFoundError as e:
+        logging.error(f"Image file not found: {e}")
+        return DEFAULT_DETAILS_RESPONSE
+    except Exception as e:
+        # This will catch errors if the API key is not set or other client issues
+        logging.error(f"Failed to initialize client or open images. Error: {e}")
+        return DEFAULT_DETAILS_RESPONSE
+
+    # Your original detailed prompt is perfect for guiding the model
+    prompt = """
+    You are given two images of a vintage or antique postcard:
+
+    1. The first image is the **front** of the postcard.
+    2. The second image is the **back** of the postcard, which contains text and possibly other relevant details.
+
+    I need you to analyze both the front and back images and provide the following information:
+
+    1. **Title**: Create a descriptive title for the postcard based on the front and back. The title should be **65 
+    characters or less**. If the front of the card has a REAL PHOTOGRAPH (not an illustration or print) in it, 
+    be sure to add 'RPPC' at the end of the title. Getting the year in there is very important as well. IT IS NOT AN RPPC if you see 
+    things like: fine tonal gradation, dot structure typical of photomechanical printing, if it's a collotype or a 
+    photo-type print, it is not an RPPC. Also, if it has a publisher name on the back, it is almost never a real 
+    photo. Finally RPPC often have visible gloss, but not always.  
+    2. **Region**: Identify the U.S. state or region mentioned in the postcard.
+    3. **Country**: Identify the country mentioned on the postcard.
+    4. **City**: Identify the city or major landmark mentioned on the postcard.
+    5. **Era**: You must identify the proper era of the card from these choices: Undivided Back (1901-1907), Divided Back (1907-1915), White Border (1915-1930), Linen (1930-1945), Photochrome (1945-now). You can only choose from those.
+    6. **Description** Write a short, descriptive, and non-flowery description of the card, preferably including details that aren't necessarily found in the title, containing elements such as (e.g., "written from a mother to a son" "references to farming" "reference to WWI" "a child's handwriting"). You must also definitively state where the card was sent, the recipients name, address, town, and state/country in the description. 
+
+
+    Please output the result in the following structure, and NOTHING else:
+
+    Example Output:
+    {
+        "Title": "Vintage Georgia Postcard SAVANNAH Beach Highway 1983 RPPC",
+        "shortTitle": "Vintage Georgia Postcard SAVANNAH Beach 1983 RPPC",
+        "Region": "Georgia",
+        "Country": "USA",
+        "City": "Savannah",
+        "Era": "Photochrome (1945-now)",
+        "Description": "Features a scenic highway lined with palms and oleanders, likely promoting beach tourism. 
+        Sent postmarked from Savannah, with a brief note about a family road trip."
+    }
+
+    Another Example:
+    {
+        "Title": "Antique Wyoming Postcard YELLOWSTONE National Park Gibbon Falls 1913",
+        "shortTitle": "Antique Wyoming Postcard YELLOWSTONE Gibbon Falls 1913",
+        "Region": "Wyoming",
+        "Country": "USA",
+        "City": "Yellowstone",
+        "Description": "Shows Gibbon Falls, part of a Haynes collection of early park photography. Likely from a 
+        traveler describing natural wonders, with references to early park infrastructure."
+    }
+
+    Another Example:
+    {
+        "Title": "Antique Florida Postcard ST. PETERSBURG John's Pass Bridge 1957 RPPC",
+        "shortTitle": "Antique Florida Postcard ST. PETERSBURG John's Pass 1957 RPPC",
+        "Region": "Florida",
+        "Country": "USA",
+        "City": "St. Petersburg",
+        "Era": "Divided Back (1907-1915)",
+        "Description": "Depicts fishermen at John's Pass Bridge, a popular tourist and fishing spot. Postcard 
+        mentions a family vacation, with references to warm weather and abundant fishing."
+    }
+
+    Another Example:
+    {
+        "Title": "Vintage Virginia Postcard NEWPORT NEWS Mariner's Museum 1999",
+        "shortTitle": "Vintage Virginia Postcard NEWPORT NEWS 1999",
+        "Region": "Virginia",
+        "Country": "USA",
+        "City": "Newport News",
+        "Era": "Photochrome (1945-now)",
+        "Description": "Features a museum display, likely sent from a visitor to Newport News. Includes mention of 
+        shipbuilding history, with a personal note about travel to Milwaukee."
+    }
+
+    Another Example:
+    {
+        "Title": "Vintage Tennessee Postcard MEMPHIS Romeo & Juliet in Cotton Field 1938 RPPC",
+        "shortTitle": "Vintage Tennessee Postcard MEMPHIS Cotton Field 1938 RPPC",
+        "Region": "Tennessee",
+        "Country": "USA",
+        "City": "Memphis",
+        "Era": "Linen (1930-1945)",
+        "Description": "Displays a staged romantic scene of two figures in a cotton field. Likely includes commentary on Southern agriculture or nostalgia, with dated cultural imagery."
+    }
+
+    If any of the information cannot be found on the postcard, please output just '' for that field.
+
+    Always try to put the year in if available. 
+
+    Never ever shorten a city name, ie never do New York -> NY. 
+
+    Always put the city in all caps in the title field, i.e. 'BOSTON' but never put it in all caps in the City Field.  
+    Never put the attraction itself in all caps, ONLY the city. 
+
+    Never output any commas within the title.
+
+    Never output any sort of formatting block, i.e. ```json just output the raw string.
+
+    Try to max out the 65 character limit in the title field, keyword stuff if you must. Never repeat the city or any 
+    words within the title ever. 
+    The short title can be creatively made, using same formatting guidelines, just make sure it is 1-2 words shorter than the actual first title you wrote.
+    Make sure to carefully analyze the **text on the back** of the postcard as well, since it may contain valuable information like the city, region, or country.
+    """
+
+    try:
+        # The client.models.generate_content pattern is used here
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',  # Or 'gemini-2.5-flash' if available to you
+            contents=[prompt, img_front, img_back],
+            config={
+                "response_mime_type": "application/json",
+                "response_schema": PostcardDetails,
+            },
+        )
+
+        logging.debug(f"API Response: {response.text}")
+        return response.text
+
+    except Exception as e:
+        logging.error(f"Gemini API request failed: {e}")
+        return DEFAULT_DETAILS_RESPONSE
 
 
 def _get_postcard_details_helper(api_key, front_image_path, back_image_path):
@@ -535,7 +729,7 @@ def get_secondary_postcard_details(api_key, front_image_path, back_image_path, t
         return DEFAULT_SECONDARY_RESPONSE
 
     def api_call():
-        return _get_secondary_postcard_details_helper(api_key, front_image_path, back_image_path)
+        return _get_secondary_postcard_details_gemini(api_key, front_image_path, back_image_path)
 
     for attempt in range(max_retries):
         logging.info(f"Attempt {attempt + 1}/{max_retries} for secondary details: {os.path.basename(front_image_path)}")
@@ -563,6 +757,106 @@ def get_secondary_postcard_details(api_key, front_image_path, back_image_path, t
             logging.error(
                 f"All {max_retries} attempts failed for secondary details: {os.path.basename(front_image_path)}. Returning default response.")
     return DEFAULT_SECONDARY_RESPONSE
+
+
+def _get_secondary_postcard_details_gemini(api_key, front_image_path, back_image_path):
+    try:
+        # The genai.Client() will automatically use the GOOGLE_API_KEY environment variable
+        client = genai.Client()
+
+        # Open image files
+        img_front = Image.open(front_image_path)
+        img_back = Image.open(back_image_path)
+
+    except FileNotFoundError as e:
+        logging.error(f"Image file not found: {e}")
+        return DEFAULT_DETAILS_RESPONSE
+    except Exception as e:
+        # This will catch errors if the API key is not set or other client issues
+        logging.error(f"Failed to initialize client or open images. Error: {e}")
+        return DEFAULT_DETAILS_RESPONSE
+
+
+    if front_image_base64 is None or back_image_base64 is None:
+        logging.error(
+            f"Could not encode one of the images for API call in _get_secondary_postcard_details_helper. Front: {front_image_path}, Back: {back_image_path}")
+        return '{"Destination City": "", "Origin City": ""}'
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
+    prompt = """
+    You are given two images of a vintage or antique postcard:
+
+    1. The first image is the **front** of the postcard.
+    2. The second image is the **back** of the postcard, which contains text and possibly other relevant details.
+
+    I need you to analyze both the front and back images and provide the following information:
+
+    1. **Origin City** If available, write the origin city, ONLY THE CITY. This is found within the circular black postage stamp.
+    This is known as the cancel of the card. This is often written in circular text around the stamp. 
+
+    2. **Destination City** If available, write the destination city and the state, no comma eg Billings MT. This will likely be written on the card in handwriting. 
+
+    Please output the result in the following structure, and NOTHING else:
+
+    Example Output:
+    {
+        "Destination City": "Tallahassee TN",
+        "Origin City": "Aaron"
+    }
+
+    Another Example:
+    {
+        "Destination City": "Billings MT",
+        "Origin City": "Cheyenne"
+    }
+
+    Another Example:
+    {
+        "Destination City": "Boston IL",
+        "Origin City": "Chicago"
+    }
+
+    Another Example:
+    {
+        "Destination City": "Billings MT",
+        "Origin City": "Newport News"
+    }
+
+    Another Example:
+    {
+        "Destination City": "Bozeman MT",
+        "Origin City": "Memphis"
+    }
+
+    If any of the information cannot be found on the postcard, please output just '' for that field.
+
+    YOU MUST USE THE STATE SHORTCODE FOR THE DESTINATION CITY, I.E., MT, IL, HI, ETC. IF YOU OUTPUT THE ACTUAL FULL STATE NAME, YOU HAVE FAILED YOUR TASK.
+
+    Never ever shorten a city name, ie never do New York -> NY. 
+
+    Never output any sort of formatting block, i.e. ```json just output the raw string.
+
+    Make sure to carefully analyze the **text on the back** of the postcard as well, since it may contain valuable information.
+    """
+    try:
+        # The client.models.generate_content pattern is used here
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',  # Or 'gemini-2.5-flash' if available to you
+            contents=[prompt, img_front, img_back],
+            config={
+                "response_mime_type": "application/json",
+                "response_schema": PostcardDetails,
+            },
+        )
+
+        logging.debug(f"API Response: {response.text}")
+        return response.text
+
+    except Exception as e:
+        logging.error(f"Gemini API request failed: {e}")
+        return DEFAULT_DETAILS_RESPONSE
 
 
 def _get_secondary_postcard_details_helper(api_key, front_image_path, back_image_path):
