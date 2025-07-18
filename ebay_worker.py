@@ -65,6 +65,16 @@ class PostcardDetails(BaseModel):
     Era: Optional[PostcardEra] = Field(description="The postcard era from the provided list.")
     Description: str = Field(description="Short description including sender/recipient details.")
 
+
+class SecondaryPostcardDetails(BaseModel):
+    """Defines the schema for the origin/destination JSON output."""
+    Destination_City: str = Field(alias="Destination City", description="Destination city and state code, e.g., 'Billings MT'.")
+    Origin_City: str = Field(alias="Origin City", description="Origin city from the postmark.")
+
+    class Config:
+        populate_by_name = True # Important for allowing aliases
+
+
 # Define a default response for error cases
 DEFAULT_DETAILS_RESPONSE = PostcardDetails(
     Title="",
@@ -613,7 +623,7 @@ def _get_postcard_details_helper(api_key, front_image_path, back_image_path):
         return DEFAULT_DETAILS_RESPONSE
 
 
-def get_secondary_postcard_details(api_key, front_image_path, back_image_path, timeout=20, max_workers=100,
+def get_secondary_postcard_details(api_key, front_image_path, back_image_path, timeout=20, max_workers=10,
                                    max_retries=3, retry_delay=5):
     logging.debug(f"Starting get_secondary_postcard_details for front image: {os.path.basename(front_image_path)}")
     if not api_key:
@@ -731,7 +741,7 @@ def _get_secondary_postcard_details_gemini(front_image_path, back_image_path):
             contents=[prompt, img_front, img_back],
             config={
                 "response_mime_type": "application/json",
-                "response_schema": PostcardDetails,
+                "response_schema": SecondaryPostcardDetails,
             },
         )
 
@@ -927,7 +937,7 @@ DEFAULT_DETAILS_RESPONSE = '{"Title": "", "Region": "", "Country": "", "City": "
 DEFAULT_SECONDARY_RESPONSE = '{"Destination City": "", "Origin City": ""}'
 
 
-def get_postcard_details(api_key, front_image_path, back_image_path, timeout=20, max_workers=100, max_retries=3,
+def get_postcard_details(api_key, front_image_path, back_image_path, timeout=20, max_workers=10, max_retries=3,
                          retry_delay=5):
     logging.debug(f"Starting get_postcard_details for front image: {os.path.basename(front_image_path)}")
     if not api_key:
