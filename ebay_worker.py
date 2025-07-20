@@ -442,6 +442,12 @@ def _get_postcard_details_gemini(front_image_path: str, back_image_path: str) ->
     Never output any commas within the title.
 
     Never output any sort of formatting block, i.e. ```json just output the raw string.
+    
+    If the card is blank, don't talk about it being blank, focus on Publisher name or other pertinent info, 
+    but don't output anything talking about it being blank, just omit that entirely. It's okay if the description is 
+    more concise for a blank card. 
+    
+    Don't reference a specific year unless it's clearly on the card, default to a decade. 
 
     Try to max out the 65 character limit in the title field, keyword stuff if you must. Never repeat the city or any 
     words within the title ever. 
