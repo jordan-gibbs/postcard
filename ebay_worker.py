@@ -634,7 +634,7 @@ def _get_postcard_details_helper(api_key, front_image_path, back_image_path):
 
 
 def get_secondary_postcard_details(api_key, front_image_path, back_image_path, timeout=20, max_workers=10,
-                                   max_retries=1, retry_delay=5):
+                                   max_retries=0, retry_delay=5):
     logging.debug(f"Starting get_secondary_postcard_details for front image: {os.path.basename(front_image_path)}")
     if not api_key:
         logging.error("OpenAI API key is not provided for secondary details API call.")
@@ -942,7 +942,7 @@ DEFAULT_SECONDARY_RESPONSE = '{"Destination City": "", "Origin City": ""}'
 
 
 def get_postcard_details(api_key, front_image_path, back_image_path, timeout=20, max_workers=10, max_retries=1,
-                         retry_delay=5):
+                         retry_delay=1):
     logging.debug(f"Starting get_postcard_details for front image: {os.path.basename(front_image_path)}")
     if not api_key:
         logging.error("OpenAI API key is not provided for primary details API call.")
