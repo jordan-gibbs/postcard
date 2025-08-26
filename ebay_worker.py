@@ -459,6 +459,7 @@ def _get_postcard_details_gemini(front_image_path: str, back_image_path: str) ->
                     config={
                         "response_mime_type": "application/json",
                         "response_schema": PostcardDetails,
+                        "thinking_config": types.ThinkingConfig(thinking_budget=0)
                     },
                 )
 
@@ -738,6 +739,7 @@ def _get_secondary_postcard_details_gemini(front_image_path, back_image_path):
                     config={
                         "response_mime_type": "application/json",
                         "response_schema": SecondaryPostcardDetails,
+                        "thinking_config": types.ThinkingConfig(thinking_budget=0)
                     },
                 )
 
