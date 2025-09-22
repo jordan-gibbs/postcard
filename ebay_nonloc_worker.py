@@ -355,6 +355,10 @@ things like: fine tonal gradation, dot structure typical of photomechanical prin
 photo-type print, it is not an RPPC. Also, if it has a publisher name on the back, it is almost never a real
 photo. Finally RPPC often have visible gloss, but not always.
 
+Title: Generate a title describing the art in the picture, make it concern the ART itself, not the location. The description can focus on the geographical information, but NOT the title. 
+
+ShortTitle: Generate a shorter title describing the art in the picture. 
+
 Region: Identify the U.S. state or region mentioned in the postcard.
 
 Country: Identify the country mentioned on the postcard.
@@ -879,7 +883,7 @@ class JobStatusResponse(BaseModel):
 
 
 # Main processing function to be called as a background task
-async def process_job_and_upload(job_id: str, links: List[str]):
+async def nonloc_process_job_and_upload(job_id: str, links: List[str]):
     logging.info(f"Starting processing job {job_id} for {len(links)} links.")
     all_rows = []
     try:
@@ -994,7 +998,7 @@ async def process_postcards_endpoint(request: ProcessJobRequest, background_task
         logging.error(f"Failed to create initial job record in DB for {job_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to initialize job. Database error.")
 
-    background_tasks.add_task(process_job_and_upload, job_id, request.links)
+    background_tasks.add_task(nonloc_process_job_and_upload, job_id, request.links)
 
     # Convert timestamp to Eastern Time for the response model
     eastern_time = current_utc_time.replace(tzinfo=pytz.utc).astimezone(EASTERN_TIMEZONE)

@@ -89,7 +89,7 @@ def get_all_jobs():
 # --- Streamlit Pages ---
 
 def submit_job_page():
-    st.title("🖼️ Submit New eBay Postcard Job")
+    st.title("🖼️ Submit New eBay Postcard Job (non-geographic cards")
     st.write("Paste image URLs (front and back pairs) to start a new processing job.")
 
     # --- Timed Reset Logic ---

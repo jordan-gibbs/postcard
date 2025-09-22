@@ -17,7 +17,7 @@ import threading
 import unicodedata
 import pandas as pd
 from ebay_formatter import reformat_for_ebay  # Make sure this file is present
-from ebay_nonloc_worker import _get_postcard_details_gemini_nonloc
+from ebay_nonloc_worker import nonloc_process_job_and_upload
 
 # --- MongoDB Imports ---
 from pymongo import MongoClient
@@ -1382,7 +1382,7 @@ async def process_postcards_endpoint_nongeo(request: ProcessJobRequest, backgrou
         logging.error(f"[non-geo] Failed to create initial job record for {job_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to initialize job. Database error.")
 
-    background_tasks.add_task(process_job_and_upload_nongeo, job_id, request.links)
+    background_tasks.add_task(nonloc_process_job_and_upload, job_id, request.links)
 
     eastern_time = current_utc_time.replace(tzinfo=pytz.utc).astimezone(EASTERN_TIMEZONE)
     return JobStatusResponse(
