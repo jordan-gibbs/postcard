@@ -17,7 +17,6 @@ import threading
 import unicodedata
 import pandas as pd
 from ebay_formatter import reformat_for_ebay  # Make sure this file is present
-from ebay_nonloc_worker import _get_postcard_details_gemini_nonloc
 
 # --- MongoDB Imports ---
 from pymongo import MongoClient
@@ -45,10 +44,6 @@ from PIL import Image
 import os
 import json
 
-
-
-
-
 # Define the allowed postcard eras for strict validation
 PostcardEra = Literal[
     "Undivided Back (1901-1907)",
@@ -58,10 +53,12 @@ PostcardEra = Literal[
     "Photochrome (1945-now)",
 ]
 
+
 # Create the Pydantic model for the response schema
 class PostcardDetails(BaseModel):
     """Defines the schema for the postcard details JSON output."""
-    Title: str = Field(description="Descriptive title <= 65 chars. City in caps. Add RPPC if real photo.", max_length=65)
+    Title: str = Field(description="Descriptive title <= 65 chars. City in caps. Add RPPC if real photo.",
+                       max_length=65)
     shortTitle: str = Field(description="A slightly shorter version of the title.")
     Region: str = Field(description="U.S. state or region mentioned.")
     Country: str = Field(description="Country mentioned on the postcard.")
@@ -72,11 +69,12 @@ class PostcardDetails(BaseModel):
 
 class SecondaryPostcardDetails(BaseModel):
     """Defines the schema for the origin/destination JSON output."""
-    Destination_City: str = Field(alias="Destination City", description="Destination city and state code, e.g., 'Billings MT'.")
+    Destination_City: str = Field(alias="Destination City",
+                                  description="Destination city and state code, e.g., 'Billings MT'.")
     Origin_City: str = Field(alias="Origin City", description="Origin city from the postmark.")
 
     class Config:
-        populate_by_name = True # Important for allowing aliases
+        populate_by_name = True  # Important for allowing aliases
 
 
 # Define a default response for error cases
@@ -86,10 +84,9 @@ DEFAULT_DETAILS_RESPONSE = PostcardDetails(
     Region="",
     Country="",
     City="",
-    Era=None, # Use None instead of ""
+    Era=None,  # Use None instead of ""
     Description="Error processing postcard details."
 ).model_dump_json()
-
 
 # Configure logging
 LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
@@ -322,8 +319,7 @@ def encode_image(image_path):
         return None
 
 
-
-def _get_postcard_details_gemini(front_image_path: str, back_image_path: str) -> str:
+def _get_postcard_details_gemini_nonloc(front_image_path: str, back_image_path: str) -> str:
     """
     Analyzes front and back postcard images using the Gemini SDK and returns details
     in a structured JSON format.
@@ -340,116 +336,114 @@ def _get_postcard_details_gemini(front_image_path: str, back_image_path: str) ->
     try:
         # The genai.Client() will automatically use the GOOGLE_API_KEY environment variable
 
-
         with Image.open(front_image_path) as img_front, Image.open(back_image_path) as img_back:
-
-
 
             # Your original detailed prompt is perfect for guiding the model
             prompt = """
-            You are given two images of a vintage or antique postcard:
-        
-            1. The first image is the **front** of the postcard.
-            2. The second image is the **back** of the postcard, which contains text and possibly other relevant details.
-        
-            I need you to analyze both the front and back images and provide the following information:
-        
-            1. **Title**: Create a descriptive title for the postcard based on the front and back. The title should be **65 
-            characters or less**. If the front of the card has a REAL PHOTOGRAPH (not an illustration or print) in it, 
-            be sure to add 'RPPC' at the end of the title. Getting the year in there is very important as well. IT IS NOT AN RPPC if you see 
-            things like: fine tonal gradation, dot structure typical of photomechanical printing, if it's a collotype or a 
-            photo-type print, it is not an RPPC. Also, if it has a publisher name on the back, it is almost never a real 
-            photo. Finally RPPC often have visible gloss, but not always.  
-            2. **Region**: Identify the U.S. state or region mentioned in the postcard.
-            3. **Country**: Identify the country mentioned on the postcard.
-            4. **City**: Identify the city or major landmark mentioned on the postcard.
-            5. **Era**: You must identify the proper era of the card from these choices: Undivided Back (1901-1907), Divided Back (1907-1915), White Border (1915-1930), Linen (1930-1945), Photochrome (1945-now). You can only choose from those.
-            6. **Description** Write a short, descriptive, and non-flowery description of the card, preferably including details that aren't necessarily found in the title, containing elements such as (e.g., "written from a mother to a son" "references to farming" "reference to WWI" "a child's handwriting"). You must also definitively state where the card was sent, the recipients name, address, town, and state/country in the description. 
-        
-        
-            Please output the result in the following structure, and NOTHING else:
-        
-            Example Output:
-            {
-                "Title": "Vintage Georgia Postcard SAVANNAH Beach Highway 1983 RPPC",
-                "shortTitle": "Vintage Georgia Postcard SAVANNAH Beach 1983 RPPC",
-                "Region": "Georgia",
-                "Country": "USA",
-                "City": "Savannah",
-                "Era": "Photochrome (1945-now)",
-                "Description": "Features a scenic highway lined with palms and oleanders, likely promoting beach tourism. 
-                Sent postmarked from Savannah, with a brief note about a family road trip."
-            }
-        
-            Another Example:
-            {
-                "Title": "Antique Wyoming Postcard YELLOWSTONE National Park Gibbon Falls 1913",
-                "shortTitle": "Antique Wyoming Postcard YELLOWSTONE Gibbon Falls 1913",
-                "Region": "Wyoming",
-                "Country": "USA",
-                "City": "Yellowstone",
-                "Description": "Shows Gibbon Falls, part of a Haynes collection of early park photography. Likely from a 
-                traveler describing natural wonders, with references to early park infrastructure."
-            }
-        
-            Another Example:
-            {
-                "Title": "Antique Florida Postcard ST. PETERSBURG John's Pass Bridge 1957 RPPC",
-                "shortTitle": "Antique Florida Postcard ST. PETERSBURG John's Pass 1957 RPPC",
-                "Region": "Florida",
-                "Country": "USA",
-                "City": "St. Petersburg",
-                "Era": "Divided Back (1907-1915)",
-                "Description": "Depicts fishermen at John's Pass Bridge, a popular tourist and fishing spot. Postcard 
-                mentions a family vacation, with references to warm weather and abundant fishing."
-            }
-        
-            Another Example:
-            {
-                "Title": "Vintage Virginia Postcard NEWPORT NEWS Mariner's Museum 1999",
-                "shortTitle": "Vintage Virginia Postcard NEWPORT NEWS 1999",
-                "Region": "Virginia",
-                "Country": "USA",
-                "City": "Newport News",
-                "Era": "Photochrome (1945-now)",
-                "Description": "Features a museum display, likely sent from a visitor to Newport News. Includes mention of 
-                shipbuilding history, with a personal note about travel to Milwaukee."
-            }
-        
-            Another Example:
-            {
-                "Title": "Vintage Tennessee Postcard MEMPHIS Romeo & Juliet in Cotton Field 1938 RPPC",
-                "shortTitle": "Vintage Tennessee Postcard MEMPHIS Cotton Field 1938 RPPC",
-                "Region": "Tennessee",
-                "Country": "USA",
-                "City": "Memphis",
-                "Era": "Linen (1930-1945)",
-                "Description": "Displays a staged romantic scene of two figures in a cotton field. Likely includes commentary on Southern agriculture or nostalgia, with dated cultural imagery."
-            }
-        
-            If any of the information cannot be found on the postcard, please output just '' for that field.
-        
-            Always try to put the year in if available. 
-        
-            Never ever shorten a city name, ie never do New York -> NY. 
-        
-            Always put the city in all caps in the title field, i.e. 'BOSTON' but never put it in all caps in the City Field.  
-            Never put the attraction itself in all caps, ONLY the city. 
-        
-            Never output any commas within the title.
-        
-            Never output any sort of formatting block, i.e. ```json just output the raw string.
-            
-            If the card is blank, don't talk about it being blank, focus on Publisher name or other pertinent info, 
-            but don't output anything talking about it being blank, just omit that entirely. It's okay if the description is 
-            more concise for a blank card. 
-            
-            Don't reference a specific year unless it's clearly on the card, default to a decade. 
-        
-            Try to max out the 65 character limit in the title field, keyword stuff if you must. Never repeat the city or any 
-            words within the title ever. 
-            The short title can be creatively made, using same formatting guidelines, just make sure it is 1-2 words shorter than the actual first title you wrote.
-            Make sure to carefully analyze the **text on the back** of the postcard as well, since it may contain valuable information like the city, region, or country.
+You are given two images of a vintage or antique postcard:
+
+The first image is the front of the postcard.
+
+The second image is the back of the postcard, which contains text and possibly other relevant details.
+
+I need you to analyze both the front and back images and provide the following information:
+
+Title: Create a descriptive title for the postcard based on the front and back. The title should be 65
+characters or less. If the front of the card has a REAL PHOTOGRAPH (not an illustration or print) in it,
+be sure to add 'RPPC' at the end of the title. Getting the year in there is very important as well. IT IS NOT AN RPPC if you see
+things like: fine tonal gradation, dot structure typical of photomechanical printing, if it's a collotype or a
+photo-type print, it is not an RPPC. Also, if it has a publisher name on the back, it is almost never a real
+photo. Finally RPPC often have visible gloss, but not always.
+
+Region: Identify the U.S. state or region mentioned in the postcard.
+
+Country: Identify the country mentioned on the postcard.
+
+City: Identify the city or major landmark mentioned on the postcard.
+
+Era: You must identify the proper era of the card from these choices: Undivided Back (1901-1907), Divided Back (1907-1915), White Border (1915-1930), Linen (1930-1945), Photochrome (1945-now). You can only choose from those.
+
+Description Write a short, descriptive, and non-flowery description of the card, preferably including details that aren't necessarily found in the title, containing elements such as (e.g., "written from a mother to a son" "references to farming" "reference to WWI" "a child's handwriting"). You must also definitively state where the card was sent, the recipients name, address, town, and state/country in the description.
+
+Please output the result in the following structure, and NOTHING else:
+
+Example Output:
+{
+"Title": "Antique Thanksgiving postcard turkey waiter black americana 1910",
+"shortTitle": "Thanksgiving turkey waiter black americana 1910",
+"Region": "New Hampshire",
+"Country": "USA",
+"City": "Franklin",
+"Era": "Divided Back (1907-1915)",
+"Description": "Embossed holiday scene with turkey and waiter motif typical of early 1910s design. Note references family harvest plans. Sent to James Porter, 14 Maple Street, Concord, New Hampshire USA."
+}
+
+Another Example:
+{
+"Title": "Antique Christmas postcard kids in fantasy airplane flight 1920",
+"shortTitle": "Christmas kids in fantasy airplane flight 1920",
+"Region": "Maine",
+"Country": "USA",
+"City": "Machias",
+"Era": "White Border (1915-1930)",
+"Description": "Fantasy aviation vignette with children and toys; message mentions winter weather and church pageant. Sent to Anna Blake, 22 High Street, Portland, Maine USA."
+}
+
+Another Example:
+{
+"Title": "Antique Christmas PC children in early airplane illustration 1913",
+"shortTitle": "Christmas children early airplane illustration 1913",
+"Region": "Massachusetts",
+"Country": "USA",
+"City": "Montague City",
+"Era": "Divided Back (1907-1915)",
+"Description": "Illustrated children in biplane with holly border, penciled holiday greeting. Sent to Robert Hale, 9 Main Road, Greenfield, Massachusetts USA."
+}
+
+Another Example:
+{
+"Title": "Antique kids on Christmas morning toys football drum 1917",
+"shortTitle": "Kids on Christmas morning toys 1917",
+"Region": "Pennsylvania",
+"Country": "USA",
+"City": "Reading",
+"Era": "White Border (1915-1930)",
+"Description": "Interior scene of children with toys including football drum and trumpet; playful handwriting from sibling. Sent to Mary Collins, 501 Walnut Street, Philadelphia, Pennsylvania USA."
+}
+
+Another Example:
+{
+"Title": "St Patricks Day Winsch arts and crafts rural lane shamrocks 1911",
+"shortTitle": "St Patricks Day Winsch arts and crafts lane 1911",
+"Region": "New York",
+"Country": "USA",
+"City": "Ellenburg",
+"Era": "Divided Back (1907-1915)",
+"Description": "Winsch publisher arts and crafts design with shamrocks and rural lane; ink note mentions school fair. Sent to Patrick O’Neil, 6 Church Avenue, Plattsburgh, New York USA."
+}
+
+If any of the information cannot be found on the postcard, please output just '' for that field.
+
+Always try to put the year in if available.
+
+Never ever shorten a city name, ie never do New York -> NY.
+
+Do not include the city in the title. Focus the title on the subject and style of the artwork or scene.
+
+Never output any commas within the title.
+
+Never output any sort of formatting block, i.e. ```json just output the raw string.
+
+If the card is blank, don't talk about it being blank, focus on Publisher name or other pertinent info,
+but don't output anything talking about it being blank, just omit that entirely. It's okay if the description is
+more concise for a blank card.
+
+Don't reference a specific year unless it's clearly on the card, default to a decade.
+
+Try to max out the 65 character limit in the title field, keyword stuff if you must. Never repeat the city or any
+words within the title ever.
+The short title can be creatively made, using same formatting guidelines, just make sure it is 1-2 words shorter than the actual first title you wrote.
+Make sure to carefully analyze the text on the back of the postcard as well, since it may contain valuable information like the city, region, or country.
             """
 
             try:
@@ -477,161 +471,6 @@ def _get_postcard_details_gemini(front_image_path: str, back_image_path: str) ->
     except Exception as e:
         # This will catch errors if the API key is not set or other client issues
         logging.error(f"Failed to initialize client or open images. Error: {e}")
-        return DEFAULT_DETAILS_RESPONSE
-
-
-def _get_postcard_details_helper(api_key, front_image_path, back_image_path):
-    front_image_base64 = encode_image(front_image_path)
-    back_image_base64 = encode_image(back_image_path)
-    if front_image_base64 is None or back_image_base64 is None:
-        logging.error(
-            f"Could not encode one of the images for API call in _get_postcard_details_helper. Front: {front_image_path}, Back: {back_image_path}")
-        return DEFAULT_DETAILS_RESPONSE
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
-    }
-    prompt = """
-    You are given two images of a vintage or antique postcard:
-
-    1. The first image is the **front** of the postcard.
-    2. The second image is the **back** of the postcard, which contains text and possibly other relevant details.
-
-    I need you to analyze both the front and back images and provide the following information:
-
-    1. **Title**: Create a descriptive title for the postcard based on the front and back. The title should be **65 
-    characters or less**. If the front of the card has a REAL PHOTOGRAPH (not an illustration or print) in it, 
-    be sure to add 'RPPC' at the end of the title. Getting the year in there is very important as well. IT IS NOT AN RPPC if you see 
-    things like: fine tonal gradation, dot structure typical of photomechanical printing, if it's a collotype or a 
-    photo-type print, it is not an RPPC. Also, if it has a publisher name on the back, it is almost never a real 
-    photo. Finally RPPC often have visible gloss, but not always.  
-    2. **Region**: Identify the U.S. state or region mentioned in the postcard.
-    3. **Country**: Identify the country mentioned on the postcard.
-    4. **City**: Identify the city or major landmark mentioned on the postcard.
-    5. **Era**: You must identify the proper era of the card from these choices: Undivided Back (1901-1907), Divided Back (1907-1915), White Border (1915-1930), Linen (1930-1945), Photochrome (1945-now). You can only choose from those.
-    6. **Description** Write a short, descriptive, and non-flowery description of the card, preferably including details that aren't necessarily found in the title, containing elements such as (e.g., "written from a mother to a son" "references to farming" "reference to WWI" "a child's handwriting"). You must also definitively state where the card was sent, the recipients name, address, town, and state/country in the description. 
-
-
-    Please output the result in the following structure, and NOTHING else:
-
-    Example Output:
-    {
-        "Title": "Vintage Georgia Postcard SAVANNAH Beach Highway 1983 RPPC",
-        "shortTitle": "Vintage Georgia Postcard SAVANNAH Beach 1983 RPPC",
-        "Region": "Georgia",
-        "Country": "USA",
-        "City": "Savannah",
-        "Era": "Photochrome (1945-now)",
-        "Description": "Features a scenic highway lined with palms and oleanders, likely promoting beach tourism. 
-        Sent postmarked from Savannah, with a brief note about a family road trip."
-    }
-
-    Another Example:
-    {
-        "Title": "Antique Wyoming Postcard YELLOWSTONE National Park Gibbon Falls 1913",
-        "shortTitle": "Antique Wyoming Postcard YELLOWSTONE Gibbon Falls 1913",
-        "Region": "Wyoming",
-        "Country": "USA",
-        "City": "Yellowstone",
-        "Description": "Shows Gibbon Falls, part of a Haynes collection of early park photography. Likely from a 
-        traveler describing natural wonders, with references to early park infrastructure."
-    }
-
-    Another Example:
-    {
-        "Title": "Antique Florida Postcard ST. PETERSBURG John's Pass Bridge 1957 RPPC",
-        "shortTitle": "Antique Florida Postcard ST. PETERSBURG John's Pass 1957 RPPC",
-        "Region": "Florida",
-        "Country": "USA",
-        "City": "St. Petersburg",
-        "Era": "Divided Back (1907-1915)",
-        "Description": "Depicts fishermen at John's Pass Bridge, a popular tourist and fishing spot. Postcard 
-        mentions a family vacation, with references to warm weather and abundant fishing."
-    }
-
-    Another Example:
-    {
-        "Title": "Vintage Virginia Postcard NEWPORT NEWS Mariner's Museum 1999",
-        "shortTitle": "Vintage Virginia Postcard NEWPORT NEWS 1999",
-        "Region": "Virginia",
-        "Country": "USA",
-        "City": "Newport News",
-        "Era": "Photochrome (1945-now)",
-        "Description": "Features a museum display, likely sent from a visitor to Newport News. Includes mention of 
-        shipbuilding history, with a personal note about travel to Milwaukee."
-    }
-
-    Another Example:
-    {
-        "Title": "Vintage Tennessee Postcard MEMPHIS Romeo & Juliet in Cotton Field 1938 RPPC",
-        "shortTitle": "Vintage Tennessee Postcard MEMPHIS Cotton Field 1938 RPPC",
-        "Region": "Tennessee",
-        "Country": "USA",
-        "City": "Memphis",
-        "Era": "Linen (1930-1945)",
-        "Description": "Displays a staged romantic scene of two figures in a cotton field. Likely includes commentary on Southern agriculture or nostalgia, with dated cultural imagery."
-    }
-
-    If any of the information cannot be found on the postcard, please output just '' for that field.
-
-    Always try to put the year in if available. 
-
-    Never ever shorten a city name, ie never do New York -> NY. 
-
-    Always put the city in all caps in the title field, i.e. 'BOSTON' but never put it in all caps in the City Field.  
-    Never put the attraction itself in all caps, ONLY the city. 
-
-    Never output any commas within the title.
-
-    Never output any sort of formatting block, i.e. ```json just output the raw string.
-
-    Try to max out the 65 character limit in the title field, keyword stuff if you must. Never repeat the city or any 
-    words within the title ever. 
-    The short title can be creatively made, using same formatting guidelines, just make sure it is 1-2 words shorter than the actual first title you wrote.
-    Make sure to carefully analyze the **text on the back** of the postcard as well, since it may contain valuable information like the city, region, or country.
-    """
-    payload = {
-        "model": "gpt-4.1",
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": prompt
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{front_image_base64}",
-                            "detail": "high"
-                        }
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{back_image_base64}",
-                            "detail": "high"
-                        }
-                    }
-                ]
-            }
-        ],
-        "max_tokens": 300,
-    }
-    try:
-        response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
-        response.raise_for_status()
-        response_json = response.json()
-        details = response_json['choices'][0]['message'][
-            'content'] if 'choices' in response_json else "Details not available"
-        logging.debug(f"API Response: {details}")
-        return details
-    except requests.exceptions.RequestException as e:
-        logging.error(f"API request failed: {e}")
-        return DEFAULT_DETAILS_RESPONSE
-    except Exception as e:
-        logging.error(f"Exception in _get_postcard_details_helper, skipping call. Error: {e}")
         return DEFAULT_DETAILS_RESPONSE
 
 
@@ -679,57 +518,57 @@ def _get_secondary_postcard_details_gemini(front_image_path, back_image_path):
 
             prompt = """
             You are given two images of a vintage or antique postcard:
-        
+
             1. The first image is the **front** of the postcard.
             2. The second image is the **back** of the postcard, which contains text and possibly other relevant details.
-        
+
             I need you to analyze both the front and back images and provide the following information:
-        
+
             1. **Origin City** If available, write the origin city, ONLY THE CITY. This is found within the circular black postage stamp.
             This is known as the cancel of the card. This is often written in circular text around the stamp. 
-        
+
             2. **Destination City** If available, write the destination city and the state, no comma eg Billings MT. This will likely be written on the card in handwriting. 
-        
+
             Please output the result in the following structure, and NOTHING else:
-        
+
             Example Output:
             {
                 "Destination City": "Tallahassee TN",
                 "Origin City": "Aaron"
             }
-        
+
             Another Example:
             {
                 "Destination City": "Billings MT",
                 "Origin City": "Cheyenne"
             }
-        
+
             Another Example:
             {
                 "Destination City": "Boston IL",
                 "Origin City": "Chicago"
             }
-        
+
             Another Example:
             {
                 "Destination City": "Billings MT",
                 "Origin City": "Newport News"
             }
-        
+
             Another Example:
             {
                 "Destination City": "Bozeman MT",
                 "Origin City": "Memphis"
             }
-        
+
             If any of the information cannot be found on the postcard, please output just '' for that field.
-        
+
             YOU MUST USE THE STATE SHORTCODE FOR THE DESTINATION CITY, I.E., MT, IL, HI, ETC. IF YOU OUTPUT THE ACTUAL FULL STATE NAME, YOU HAVE FAILED YOUR TASK.
-        
+
             Never ever shorten a city name, ie never do New York -> NY. 
-        
+
             Never output any sort of formatting block, i.e. ```json just output the raw string.
-        
+
             Make sure to carefully analyze the **text on the back** of the postcard as well, since it may contain valuable information.
             """
             try:
@@ -758,118 +597,6 @@ def _get_secondary_postcard_details_gemini(front_image_path, back_image_path):
         # This will catch errors if the API key is not set or other client issues
         logging.error(f"Failed to initialize client or open images. Error: {e}")
         return DEFAULT_DETAILS_RESPONSE
-
-
-def _get_secondary_postcard_details_helper(api_key, front_image_path, back_image_path):
-    front_image_base64 = encode_image(front_image_path)
-    back_image_base64 = encode_image(back_image_path)
-    if front_image_base64 is None or back_image_base64 is None:
-        logging.error(
-            f"Could not encode one of the images for API call in _get_secondary_postcard_details_helper. Front: {front_image_path}, Back: {back_image_path}")
-        return '{"Destination City": "", "Origin City": ""}'
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
-    }
-    prompt = """
-    You are given two images of a vintage or antique postcard:
-
-    1. The first image is the **front** of the postcard.
-    2. The second image is the **back** of the postcard, which contains text and possibly other relevant details.
-
-    I need you to analyze both the front and back images and provide the following information:
-
-    1. **Origin City** If available, write the origin city, ONLY THE CITY. This is found within the circular black postage stamp.
-    This is known as the cancel of the card. This is often written in circular text around the stamp. 
-
-    2. **Destination City** If available, write the destination city and the state, no comma eg Billings MT. This will likely be written on the card in handwriting. 
-
-    Please output the result in the following structure, and NOTHING else:
-
-    Example Output:
-    {
-        "Destination City": "Tallahassee TN",
-        "Origin City": "Aaron"
-    }
-
-    Another Example:
-    {
-        "Destination City": "Billings MT",
-        "Origin City": "Cheyenne"
-    }
-
-    Another Example:
-    {
-        "Destination City": "Boston IL",
-        "Origin City": "Chicago"
-    }
-
-    Another Example:
-    {
-        "Destination City": "Billings MT",
-        "Origin City": "Newport News"
-    }
-
-    Another Example:
-    {
-        "Destination City": "Bozeman MT",
-        "Origin City": "Memphis"
-    }
-
-    If any of the information cannot be found on the postcard, please output just '' for that field.
-
-    YOU MUST USE THE STATE SHORTCODE FOR THE DESTINATION CITY, I.E., MT, IL, HI, ETC. IF YOU OUTPUT THE ACTUAL FULL STATE NAME, YOU HAVE FAILED YOUR TASK.
-
-    Never ever shorten a city name, ie never do New York -> NY. 
-
-    Never output any sort of formatting block, i.e. ```json just output the raw string.
-
-    Make sure to carefully analyze the **text on the back** of the postcard as well, since it may contain valuable information.
-    """
-    payload = {
-        "model": "gpt-4.1",
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": prompt
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{front_image_base64}",
-                            "detail": "high"
-                        }
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{back_image_base64}",
-                            "detail": "high"
-                        }
-                    }
-                ]
-            }
-        ],
-        "max_tokens": 300,
-    }
-    try:
-        response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
-        response.raise_for_status()
-        response_json = response.json()
-        details = response_json['choices'][0]['message'][
-            'content'] if 'choices' in response_json else "Details not available"
-        logging.debug(f"Secondary API response: {details}")
-        return details
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Secondary API request failed: {e}")
-        return '{"Destination City": "", "Origin City": ""}'
-    except Exception as e:
-        logging.error(f"Exception in _get_secondary_postcard_details_helper, skipping call. Error: {e}")
-        return '{"Destination City": "", "Origin City": ""}'
-
 
 
 def download_images_from_links(links, tmp_dir):
@@ -952,7 +679,7 @@ def get_postcard_details(api_key, front_image_path, back_image_path, timeout=20,
         return DEFAULT_DETAILS_RESPONSE
 
     def api_call():
-        return _get_postcard_details_gemini(front_image_path, back_image_path)
+        return _get_postcard_details_gemini_nonloc(front_image_path, back_image_path)
 
     for attempt in range(max_retries):
         logging.info(f"Attempt {attempt + 1}/{max_retries} for primary details: {os.path.basename(front_image_path)}")
@@ -980,7 +707,6 @@ def get_postcard_details(api_key, front_image_path, back_image_path, timeout=20,
             logging.error(
                 f"All {max_retries} attempts failed for primary details: {os.path.basename(front_image_path)}. Returning default response.")
     return DEFAULT_DETAILS_RESPONSE
-
 
 
 def process_batch(api_key, batch):
@@ -1230,78 +956,6 @@ async def process_job_and_upload(job_id: str, links: List[str]):
             logging.error(f"Failed to update job {job_id} status to 'failed' in DB: {db_e}")
 
 
-async def process_job_and_upload_nongeo(job_id: str, links: List[str]):
-    logging.info(f"[non-geo] Starting job {job_id} for {len(links)} links.")
-    all_rows = []
-    try:
-        client = get_mongo_client()
-        db = client[MONGO_DB_NAME]
-        collection = db[MONGO_COLLECTION_NAME]
-        collection.update_one(
-            {"job_id": job_id},
-            {"$set": {"status": "processing", "timestamp": datetime.utcnow()}},
-            upsert=True
-        )
-        client.close()
-
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            batch_size = 50
-            for i in range(0, len(links), batch_size):
-                current_links_batch = links[i:i + batch_size]
-
-                logging.info(f"[non-geo] Downloading batch {i // batch_size + 1}")
-                postcards = download_images_from_links(current_links_batch, tmp_dir)
-
-                logging.info(f"[non-geo] Processing batch {i // batch_size + 1}")
-                postcards_details = process_postcards_in_folder(OPENAI_API_KEY, postcards, workers=8)
-
-                logging.info(f"[non-geo] Aggregating rows for batch {i // batch_size + 1}")
-                save_postcards_to_csv(postcards_details, all_rows)
-
-        if not all_rows:
-            client = get_mongo_client()
-            db = client[MONGO_DB_NAME]
-            collection = db[MONGO_COLLECTION_NAME]
-            collection.update_one(
-                {"job_id": job_id},
-                {"$set": {"status": "completed_no_data", "timestamp": datetime.utcnow()}}
-            )
-            client.close()
-            return
-
-        df = pd.DataFrame(all_rows)
-        df_cleaned = df.copy()
-        columns_to_clean = [col for i, col in enumerate(df_cleaned.columns[3:9]) if i + 3 != 7]
-        df_cleaned.loc[:, columns_to_clean] = df_cleaned.loc[:, columns_to_clean].applymap(clean_text)
-        df_cleaned = df_cleaned.fillna('')
-
-        ebay_ready_df = reformat_for_ebay(df_cleaned)
-
-        csv_buffer = io.StringIO()
-        ebay_ready_df.to_csv(csv_buffer, index=False)
-        csv_data_bytes = csv_buffer.getvalue().encode('utf-8')
-
-        upload_to_mongodb(job_id, links, csv_data_bytes)
-        logging.info(f"[non-geo] Job {job_id} completed and uploaded.")
-
-    except Exception as e:
-        logging.error(f"[non-geo] Error processing job {job_id}: {e}", exc_info=True)
-        try:
-            client = get_mongo_client()
-            db = client[MONGO_DB_NAME]
-            collection = db[MONGO_COLLECTION_NAME]
-            collection.update_one(
-                {"job_id": job_id},
-                {"$set": {"status": "failed", "error_message": str(e), "timestamp": datetime.utcnow()}},
-                upsert=True
-            )
-            client.close()
-        except Exception as db_e:
-            logging.error(f"[non-geo] Failed to mark job {job_id} failed in DB: {db_e}")
-
-
-
-
 import uuid
 
 # Define the Eastern Timezone for conversion
@@ -1352,47 +1006,6 @@ async def process_postcards_endpoint(request: ProcessJobRequest, background_task
         filename=f"postcards_job_{job_id}.csv",
         original_links=request.links
     )
-
-
-@app.post("/nongeo/process-postcards", response_model=JobStatusResponse)
-async def process_postcards_endpoint_nongeo(request: ProcessJobRequest, background_tasks: BackgroundTasks):
-    if not request.links:
-        raise HTTPException(status_code=400, detail="No links provided.")
-    if not OPENAI_API_KEY:
-        raise HTTPException(status_code=500, detail="OpenAI API key is not configured on the server.")
-
-    job_id = str(uuid.uuid4())
-    logging.info(f"[non-geo] Received request for new job: {job_id}")
-    current_utc_time = datetime.utcnow()
-
-    try:
-        client = get_mongo_client()
-        db = client[MONGO_DB_NAME]
-        collection = db[MONGO_COLLECTION_NAME]
-        collection.insert_one({
-            "job_id": job_id,
-            "original_links": request.links,
-            "timestamp": current_utc_time,
-            "status": "pending",
-            "filename": f"postcards_nongeo_{job_id}.csv",  # distinct filename
-            "csv_data": ""
-        })
-        client.close()
-    except Exception as e:
-        logging.error(f"[non-geo] Failed to create initial job record for {job_id}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to initialize job. Database error.")
-
-    background_tasks.add_task(process_job_and_upload_nongeo, job_id, request.links)
-
-    eastern_time = current_utc_time.replace(tzinfo=pytz.utc).astimezone(EASTERN_TIMEZONE)
-    return JobStatusResponse(
-        job_id=job_id,
-        status="pending",
-        timestamp=eastern_time,
-        filename=f"postcards_nongeo_{job_id}.csv",
-        original_links=request.links
-    )
-
 
 
 # New endpoint to get job status
