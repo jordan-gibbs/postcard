@@ -1230,6 +1230,10 @@ async def process_job_and_upload(job_id: str, links: List[str]):
             logging.error(f"Failed to update job {job_id} status to 'failed' in DB: {db_e}")
 
 
+
+
+
+
 async def process_job_and_upload_nongeo(job_id: str, links: List[str]):
     logging.info(f"[non-geo] Starting job {job_id} for {len(links)} links.")
     all_rows = []
@@ -1300,6 +1304,110 @@ async def process_job_and_upload_nongeo(job_id: str, links: List[str]):
             logging.error(f"[non-geo] Failed to mark job {job_id} failed in DB: {db_e}")
 
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from router_helpers import decide_label  # uses your decider.py
+import math, io, time
+
+async def router_process_job_and_upload(job_id: str, links: list[str]):
+    logging.info(f"[router] Starting parent job {job_id} with {len(links)} links")
+
+    # Mark job as processing
+    try:
+        client = get_mongo_client()
+        db = client[MONGO_DB_NAME]
+        col = db[MONGO_COLLECTION_NAME]
+        col.update_one({"job_id": job_id}, {"$set": {"status": "processing", "timestamp": datetime.utcnow()}}, upsert=True)
+    finally:
+        client.close()
+
+    all_rows: list[dict] = []
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            # 1) Download everything once (so we can pass local paths to both flows)
+            logging.info(f"[router] Downloading all images for parent job {job_id}")
+            postcards = download_images_from_links(links, tmp_dir)  # list of dicts (front/back local paths + links)
+
+            # 2) Split into geo vs non-geo by running the decider on local files
+            geo_postcards, non_geo_postcards = [], []
+            for pc in postcards:
+                try:
+                    label = decide_label(pc["front_image_path"], pc["back_image_path"])
+                except Exception as e:
+                    logging.warning(f"[router] Decider failed on index {pc.get('original_index')}: {e}. Default to geo")
+                    label = "geographic"
+
+                (geo_postcards if label == "geographic" else non_geo_postcards).append(pc)
+
+            logging.info(f"[router] Split: geo={len(geo_postcards)} pairs, non-geo={len(non_geo_postcards)} pairs")
+
+            # 3) Process each subset in parallel (fan-out)
+            def _process_subset(tag: str, subset: list[dict]) -> list[dict]:
+                if not subset:
+                    return []
+                logging.info(f"[router] [{tag}] processing {len(subset)} pairs")
+                # Reuse your existing pipeline
+                details = process_postcards_in_folder(OPENAI_API_KEY, subset, workers=8)
+                rows: list[dict] = []
+                save_postcards_to_csv(details, rows)
+                return rows
+
+            futures = {}
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                if geo_postcards:
+                    futures[pool.submit(_process_subset, "geo", geo_postcards)] = "geo"
+                if non_geo_postcards:
+                    futures[pool.submit(_process_subset, "nongeo", non_geo_postcards)] = "nongeo"
+
+                for fut in as_completed(futures):
+                    tag = futures[fut]
+                    try:
+                        rows = fut.result()
+                        logging.info(f"[router] [{tag}] produced {len(rows)} rows")
+                        all_rows.extend(rows)
+                    except Exception as e:
+                        logging.error(f"[router] [{tag}] subset failed: {e}", exc_info=True)
+
+        if not all_rows:
+            # No data -> mark as completed_no_data
+            client = get_mongo_client()
+            try:
+                db = client[MONGO_DB_NAME]; col = db[MONGO_COLLECTION_NAME]
+                col.update_one({"job_id": job_id}, {"$set": {"status": "completed_no_data", "timestamp": datetime.utcnow()}})
+            finally:
+                client.close()
+            logging.warning(f"[router] Parent job {job_id} produced no rows")
+            return
+
+        # 4) Fan-in: merge to single CSV and upload under the ONE parent job
+        df = pd.DataFrame(all_rows)
+        df_cleaned = df.copy()
+        columns_to_clean = [col for i, col in enumerate(df_cleaned.columns[3:9]) if i + 3 != 7]
+        df_cleaned.loc[:, columns_to_clean] = df_cleaned.loc[:, columns_to_clean].applymap(clean_text)
+        df_cleaned = df_cleaned.fillna('')
+
+        ebay_ready_df = reformat_for_ebay(df_cleaned)
+
+        csv_buf = io.StringIO()
+        ebay_ready_df.to_csv(csv_buf, index=False)
+        csv_bytes = csv_buf.getvalue().encode("utf-8")
+
+        upload_to_mongodb(job_id, links, csv_bytes)
+        logging.info(f"[router] Parent job {job_id} merged and uploaded successfully")
+
+    except Exception as e:
+        logging.error(f"[router] Parent job {job_id} failed: {e}", exc_info=True)
+        try:
+            client = get_mongo_client()
+            db = client[MONGO_DB_NAME]
+            col = db[MONGO_COLLECTION_NAME]
+            col.update_one(
+                {"job_id": job_id},
+                {"$set": {"status": "failed", "error_message": str(e), "timestamp": datetime.utcnow()}},
+                upsert=True
+            )
+        finally:
+            client.close()
 
 
 import uuid
@@ -1402,45 +1510,42 @@ class RouterResponse(BaseModel):
     non_geographic_job_id: Optional[str] = None
     decisions: List[dict]
 
-@app.post("/router/process-postcards", response_model=RouterResponse)
+@app.post("/router/process-postcards", response_model=JobStatusResponse)
 async def route_and_process_endpoint(request: ProcessJobRequest, background_tasks: BackgroundTasks):
     if not request.links:
         raise HTTPException(status_code=400, detail="No links provided.")
-    if len(request.links) % 2 != 0:
-        raise HTTPException(status_code=400, detail="Must send an even number of links (front/back pairs).")
+    if not OPENAI_API_KEY:
+        raise HTTPException(status_code=500, detail="OpenAI API key is not configured on the server.")
 
-    geo_links, nongeo_links, decisions = route_links(request.links)
+    job_id = str(uuid.uuid4())
+    now_utc = datetime.utcnow()
 
-    geo_job_id = str(uuid.uuid4()) if geo_links else None
-    nongeo_job_id = str(uuid.uuid4()) if nongeo_links else None
-
-    # Create job docs
-    client = get_mongo_client()
-    db = client[MONGO_DB_NAME]
-    col = db[MONGO_COLLECTION_NAME]
-    now = datetime.utcnow()
-
-    if geo_job_id:
+    # Create parent job doc
+    try:
+        client = get_mongo_client()
+        db = client[MONGO_DB_NAME]
+        col = db[MONGO_COLLECTION_NAME]
         col.insert_one({
-            "job_id": geo_job_id, "original_links": geo_links, "timestamp": now,
-            "status": "pending", "filename": f"postcards_job_{geo_job_id}.csv", "csv_data": "",
-            "route_decisions": decisions  # store once; optional
+            "job_id": job_id,
+            "original_links": request.links,
+            "timestamp": now_utc,
+            "status": "pending",
+            "filename": f"postcards_router_{job_id}.csv",
+            "csv_data": ""
         })
-        background_tasks.add_task(process_job_and_upload, geo_job_id, geo_links)
+    finally:
+        client.close()
 
-    if nongeo_job_id:
-        col.insert_one({
-            "job_id": nongeo_job_id, "original_links": nongeo_links, "timestamp": now,
-            "status": "pending", "filename": f"postcards_nongeo_{nongeo_job_id}.csv", "csv_data": "",
-            "route_decisions": decisions  # store once; optional
-        })
-        background_tasks.add_task(nonloc_process_job_and_upload, nongeo_job_id, nongeo_links)
+    # Enqueue orchestrator and return immediately
+    background_tasks.add_task(router_process_job_and_upload, job_id, request.links)
 
-    client.close()
-    return RouterResponse(
-        geographic_job_id=geo_job_id,
-        non_geographic_job_id=nongeo_job_id,
-        decisions=decisions
+    eastern_time = now_utc.replace(tzinfo=pytz.utc).astimezone(EASTERN_TIMEZONE)
+    return JobStatusResponse(
+        job_id=job_id,
+        status="pending",
+        timestamp=eastern_time,
+        filename=f"postcards_router_{job_id}.csv",
+        original_links=request.links
     )
 
 

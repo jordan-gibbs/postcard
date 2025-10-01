@@ -76,7 +76,9 @@ Rules:
                 "thinking_config": types.ThinkingConfig(thinking_budget=0),
             },
         )
+        print(json.loads(resp.text))
         return json.loads(resp.text)
+
     except errors.ClientError as e:
         logging.error(f"Gemini classify error: {e}")
         # Fallback: mark as non-geographic so it doesn't block your pipeline
