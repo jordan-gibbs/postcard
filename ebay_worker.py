@@ -18,6 +18,7 @@ import unicodedata
 import pandas as pd
 from ebay_formatter import reformat_for_ebay  # Make sure this file is present
 from ebay_nonloc_worker import nonloc_process_job_and_upload
+from ebay_nonloc_worker import process_postcards_in_folder as process_postcards_in_folder_nongeo
 
 # --- MongoDB Imports ---
 from pymongo import MongoClient
@@ -1346,10 +1347,14 @@ async def router_process_job_and_upload(job_id: str, links: list[str]):
                 if not subset:
                     return []
                 logging.info(f"[router] [{tag}] processing {len(subset)} pairs")
-                # Reuse your existing pipeline
-                details = process_postcards_in_folder(OPENAI_API_KEY, subset, workers=8)
+
+                if tag == "nongeo":
+                    details = process_postcards_in_folder_nongeo(OPENAI_API_KEY, subset, workers=8)
+                else:
+                    details = process_postcards_in_folder(OPENAI_API_KEY, subset, workers=8)
+
                 rows: list[dict] = []
-                save_postcards_to_csv(details, rows)
+                save_postcards_to_csv(details, rows)  # you can keep using the existing CSV builder
                 return rows
 
             futures = {}
