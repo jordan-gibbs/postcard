@@ -2,6 +2,7 @@
 import json
 from typing import List, Tuple, Dict
 from google import genai
+from mimetypes import guess_type
 from google.genai import types
 
 # Reuse the same API key your app already uses
@@ -38,9 +39,11 @@ def _part_from_path(p: str) -> types.Part:
     with open(p, "rb") as f:
         return types.Part.from_bytes(f.read(), mime_type="image/jpeg")
 
-def _part_from_url(u: str) -> types.Part:
-    # lets Gemini fetch it
-    return types.Part.from_uri(u, mime_type="image/jpeg")
+def _part_from_url(u: str):
+    mt, _ = guess_type(u)
+    if not mt:
+        mt = "image/jpeg"  # sensible default
+    return types.Part.from_uri(file_uri=u, mime_type=mt)
 
 def classify_pair_paths(front_path: str, back_path: str) -> Dict:
     """Classify a local file pair. Returns a dict with keys decision/confidence/reason."""
