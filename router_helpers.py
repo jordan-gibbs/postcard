@@ -43,11 +43,24 @@ class RouterDecision(BaseModel):
     reason: str = Field(description="brief rationale")
 
 def classify_pair_urls(front_url: str, back_url: Optional[str]) -> dict:
-    prompt = (
+    prompt = ("""
         "Decide if this postcard (front and optionally back) is GEOGRAPHIC "
         "(clearly tied to a place/city/state/landmark) or NON-GEOGRAPHIC. "
         "Respond as JSON with fields: decision ('geographic'|'non-geographic'), "
         "confidence (0..1), reason (short)."
+- "Geographic": The primary subject is a real-world place or feature: city/town, street/bridge,
+  named building, skyline, neighborhood, park, national/state/local landmark, mountain, river,
+  lake, or other addressable location. Clues include printed captions, signage, publisher lines
+  or handwritten/printed text clearly naming a place.
+- "Non-geographic": Holiday/seasonal greetings, novelty/comic art, generic people/animals/flowers,
+  abstract/patterns, generic interiors, generic objects, and scenes with no clearly named place.
+
+Rules:
+- If EITHER the front OR back provides strong evidence of a specific named place, classify as "geographic".
+- If evidence is weak/ambiguous, prefer "non-geographic" and lower the confidence.
+- Do NOT infer places from vague hints; require explicit place names or unmistakable landmark identity.
+
+        """
     )
     parts = [prompt, _part_from_url(front_url)]
     if back_url:
