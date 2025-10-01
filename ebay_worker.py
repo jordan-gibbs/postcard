@@ -1394,6 +1394,55 @@ async def process_postcards_endpoint_nongeo(request: ProcessJobRequest, backgrou
     )
 
 
+from router_helpers import route_links
+import uuid
+
+class RouterResponse(BaseModel):
+    geographic_job_id: Optional[str] = None
+    non_geographic_job_id: Optional[str] = None
+    decisions: List[dict]
+
+@app.post("/router/process-postcards", response_model=RouterResponse)
+async def route_and_process_endpoint(request: ProcessJobRequest, background_tasks: BackgroundTasks):
+    if not request.links:
+        raise HTTPException(status_code=400, detail="No links provided.")
+    if len(request.links) % 2 != 0:
+        raise HTTPException(status_code=400, detail="Must send an even number of links (front/back pairs).")
+
+    geo_links, nongeo_links, decisions = route_links(request.links)
+
+    geo_job_id = str(uuid.uuid4()) if geo_links else None
+    nongeo_job_id = str(uuid.uuid4()) if nongeo_links else None
+
+    # Create job docs
+    client = get_mongo_client()
+    db = client[MONGO_DB_NAME]
+    col = db[MONGO_COLLECTION_NAME]
+    now = datetime.utcnow()
+
+    if geo_job_id:
+        col.insert_one({
+            "job_id": geo_job_id, "original_links": geo_links, "timestamp": now,
+            "status": "pending", "filename": f"postcards_job_{geo_job_id}.csv", "csv_data": "",
+            "route_decisions": decisions  # store once; optional
+        })
+        background_tasks.add_task(process_job_and_upload, geo_job_id, geo_links)
+
+    if nongeo_job_id:
+        col.insert_one({
+            "job_id": nongeo_job_id, "original_links": nongeo_links, "timestamp": now,
+            "status": "pending", "filename": f"postcards_nongeo_{nongeo_job_id}.csv", "csv_data": "",
+            "route_decisions": decisions  # store once; optional
+        })
+        background_tasks.add_task(nonloc_process_job_and_upload, nongeo_job_id, nongeo_links)
+
+    client.close()
+    return RouterResponse(
+        geographic_job_id=geo_job_id,
+        non_geographic_job_id=nongeo_job_id,
+        decisions=decisions
+    )
+
 
 # New endpoint to get job status
 @app.get("/jobs/{job_id}", response_model=JobStatusResponse)
