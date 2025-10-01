@@ -8,7 +8,7 @@ import uuid
 import mimetypes
 import requests
 import logging
-from typing import Optional, Tuple, List
+from typing import Optional, List, Dict, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from google import genai
@@ -30,6 +30,8 @@ DECIDER_LOG_JSON = os.getenv("DECIDER_LOG_JSON", "0") in ("1", "true", "True", "
 _DECIDER_LOG_LEVEL = os.getenv("DECIDER_LOG_LEVEL", "INFO").upper()
 
 logger = logging.getLogger("router_helpers.decider")
+# Ensure our messages propagate to root handlers
+logger.propagate = True
 try:
     logger.setLevel(getattr(logging, _DECIDER_LOG_LEVEL, logging.INFO))
 except Exception:
@@ -44,6 +46,8 @@ USER_AGENT = (
 
 def _safe_url(url: str, maxlen: int = 140) -> str:
     # Redact query params and clip
+    if not url:
+        return ""
     try:
         base = url.split("?", 1)[0]
     except Exception:
@@ -66,17 +70,7 @@ def _part_from_url(url: str) -> types.Part:
     resp.raise_for_status()
     mime = _guess_mime(url, resp.headers)
     size = len(resp.content)
-    logger.debug(
-        "downloaded image",
-        extra={
-            "event": "download_ok",
-            "url": _safe_url(url),
-            "status": resp.status_code,
-            "mime": mime,
-            "bytes": size,
-            "ms": round(dt, 1),
-        },
-    )
+    logger.debug(f"[decider] download_ok url={_safe_url(url)} status={resp.status_code} mime={mime} bytes={size} ms={round(dt,1)}")
     return types.Part.from_bytes(data=resp.content, mime_type=mime)
 
 def _part_from_path(path: str) -> types.Part:
@@ -84,10 +78,7 @@ def _part_from_path(path: str) -> types.Part:
     with open(path, "rb") as f:
         data = f.read()
     mime = mimetypes.guess_type(path)[0] or "image/jpeg"
-    logger.debug(
-        "loaded local image",
-        extra={"event": "file_read_ok", "path": path, "bytes": len(data), "mime": mime},
-    )
+    logger.debug(f"[decider] file_read_ok path={path} bytes={len(data)} mime={mime}")
     return types.Part.from_bytes(data=data, mime_type=mime)
 
 class RouterDecision(BaseModel):
@@ -110,19 +101,19 @@ def _normalize_decision(s: str) -> str:
         return "geographic"
     if s in ("non-geographic", "nongeographic", "non-geo", "nongeo", "not-geographic"):
         return "non-geographic"
-    # Last chance: simple contains (very defensive)
     if "geograph" in s and "non" not in s:
         return "geographic"
     return "non-geographic"
 
-# ---------- Model Calls ----------
+# ---------- Model Calls (FRONT ONLY) ----------
 
-def classify_pair_urls(front_url: str, back_url: Optional[str], _req_id: Optional[str] = None) -> dict:
+def classify_pair_urls(front_url: str, back_url: Optional[str], _req_id: Optional[str] = None, pair_index: Optional[int] = None) -> Dict[str, Any]:
     """
     Classify the postcard using ONLY the FRONT image.
     back_url is accepted for signature compatibility but ignored.
     """
-    req_id = _req_id or str(uuid.uuid4())
+    req_id = _req_id or uuid.uuid4().hex[:8]
+    pidx = -1 if pair_index is None else pair_index
     front_safe = _safe_url(front_url)
 
     prompt = (
@@ -145,12 +136,9 @@ Rules:
 - Use explicit place names or unmistakable landmark identity.
 - If evidence is weak/ambiguous, prefer "non-geographic" and lower the confidence.
         """
-    )
+    ).strip()
 
-    logger.info(
-        "decider_start",
-        extra={"event": "decider_start", "req_id": req_id, "front_url": front_safe},
-    )
+    logger.info(f"[decider] start req_id={req_id} pair_index={pidx} front={front_safe} (BACK IGNORED)")
 
     parts = [prompt, _part_from_url(front_url)]  # FRONT ONLY
     t0 = time.perf_counter()
@@ -167,50 +155,31 @@ Rules:
         dt = (time.perf_counter() - t0) * 1000
 
         if DECIDER_LOG_JSON:
-            logger.debug(
-                "decider_raw_json",
-                extra={"event": "decider_raw_json", "req_id": req_id, "json": resp.text},
-            )
+            logger.debug(f"[decider] raw_json req_id={req_id} pair_index={pidx} json={resp.text}")
 
         # Parse and normalize
         try:
             parsed = json.loads(resp.text)
         except Exception as pe:
-            logger.error(
-                "decider_json_parse_error",
-                extra={"event": "decider_json_parse_error", "req_id": req_id, "error": str(pe), "resp_text": resp.text[:500]},
-            )
+            logger.error(f"[decider] json_parse_error req_id={req_id} pair_index={pidx} err={pe} resp_snip={resp.text[:500]}")
             parsed = {"decision": "non-geographic", "confidence": 0.0, "reason": "json_parse_error"}
 
         norm = _normalize_decision(parsed.get("decision", ""))
         parsed["decision"] = norm
 
         logger.info(
-            "decider_done",
-            extra={
-                "event": "decider_done",
-                "req_id": req_id,
-                "ms": round(dt, 1),
-                "decision": parsed.get("decision"),
-                "confidence": parsed.get("confidence"),
-                "reason": parsed.get("reason"),
-            },
+            f"[decider] done req_id={req_id} pair_index={pidx} ms={round(dt,1)} "
+            f"decision={parsed.get('decision')} conf={parsed.get('confidence')} reason=\"{parsed.get('reason')}\""
         )
         return parsed
 
     except errors.ClientError as e:
         dt = (time.perf_counter() - t0) * 1000
-        logger.error(
-            "decider_client_error",
-            extra={"event": "decider_client_error", "req_id": req_id, "ms": round(dt, 1), "error": str(e)},
-        )
+        logger.error(f"[decider] client_error req_id={req_id} pair_index={pidx} ms={round(dt,1)} err={e}")
         return {"decision": "non-geographic", "confidence": 0.0, "reason": f"gemini_error: {e}"}
     except Exception as e:
         dt = (time.perf_counter() - t0) * 1000
-        logger.exception(
-            "decider_exception",
-            extra={"event": "decider_exception", "req_id": req_id, "ms": round(dt, 1), "error": str(e)},
-        )
+        logger.exception(f"[decider] exception req_id={req_id} pair_index={pidx} ms={round(dt,1)} err={e}")
         return {"decision": "non-geographic", "confidence": 0.0, "reason": f"exception: {e}"}
 
 # ---------- Routing ----------
@@ -222,56 +191,42 @@ def route_links(links: List[str]):
       - decisions: list aligned to pair index:
           {"decision": "geographic"|"non-geographic", "confidence": float, "reason": str}
     """
-    req_id = str(uuid.uuid4())
+    req_id = uuid.uuid4().hex[:8]
     n = len(links)
-    logger.info(
-        "routing_start",
-        extra={"event": "routing_start", "req_id": req_id, "num_links": n, "decider_workers": DECIDER_WORKERS},
-    )
+    pairs_ct = n // 2
+    logger.info(f"[decider] routing_start req_id={req_id} links={n} pairs={pairs_ct} workers={DECIDER_WORKERS}")
 
     # Build (pair_index, front, back)
-    pairs = []
+    pairs: List[tuple] = []
     for i in range(0, n, 2):
         front = links[i]
         back = links[i + 1] if i + 1 < n else None
         pairs.append((i // 2, front, back))
-        logger.debug(
-            "pair_built",
-            extra={
-                "event": "pair_built",
-                "req_id": req_id,
-                "pair_index": i // 2,
-                "front_url": _safe_url(front),
-                "back_url": _safe_url(back) if back else None,
-            },
-        )
+        logger.debug(f"[decider] pair_built req_id={req_id} pair_index={i//2} front={_safe_url(front)} back={_safe_url(back) if back else None}")
 
     decisions: List[Optional[dict]] = [None] * len(pairs)
 
-    def _job(front_url, back_url):
-        # We ALWAYS classify on the FRONT ONLY (no penalty if back is missing)
-        return classify_pair_urls(front_url, back_url, _req_id=req_id)
+    def _job(front_url, back_url, idx):
+        # FRONT ONLY classification
+        return classify_pair_urls(front_url, back_url, _req_id=req_id, pair_index=idx)
 
     # Parallel classify
     t0 = time.perf_counter()
     with ThreadPoolExecutor(max_workers=DECIDER_WORKERS) as ex:
-        future_map = {ex.submit(_job, front, back): idx for (idx, front, back) in pairs}
+        future_map = {ex.submit(_job, front, back, idx): idx for (idx, front, back) in pairs}
         for fut in as_completed(future_map):
             idx = future_map[fut]
             try:
                 decisions[idx] = fut.result()
             except Exception as e:
-                logger.exception(
-                    "decider_future_exception",
-                    extra={"event": "decider_future_exception", "req_id": req_id, "pair_index": idx, "error": str(e)},
-                )
+                logger.exception(f"[decider] future_exception req_id={req_id} pair_index={idx} err={e}")
                 decisions[idx] = {
                     "decision": "non-geographic",
                     "confidence": 0.0,
                     "reason": f"decider error: {e}",
                 }
     dt = (time.perf_counter() - t0) * 1000
-    logger.info("classification_batch_done", extra={"event": "classification_batch_done", "req_id": req_id, "ms": round(dt, 1)})
+    logger.info(f"[decider] classification_batch_done req_id={req_id} ms={round(dt,1)}")
 
     # Bucketize links using the decisions, preserving original pair order
     geo_links, nongeo_links = [], []
@@ -293,27 +248,13 @@ def route_links(links: List[str]):
             bucket.append(back)
 
         logger.debug(
-            "pair_bucketed",
-            extra={
-                "event": "pair_bucketed",
-                "req_id": req_id,
-                "pair_index": idx,
-                "decision": d_norm,
-                "front_url": _safe_url(front),
-                "back_url": _safe_url(back) if back else None,
-            },
+            f"[decider] pair_bucketed req_id={req_id} pair_index={idx} decision={d_norm} "
+            f"front={_safe_url(front)} back={_safe_url(back) if back else None}"
         )
 
     logger.info(
-        "routing_done",
-        extra={
-            "event": "routing_done",
-            "req_id": req_id,
-            "geo_pairs": len(geo_indices),
-            "non_geo_pairs": len(nongeo_indices),
-            "geo_indices": geo_indices,
-            "non_geo_indices": nongeo_indices,
-        },
+        f"[decider] routing_done req_id={req_id} geo_pairs={len(geo_indices)} non_geo_pairs={len(nongeo_indices)} "
+        f"geo_indices={geo_indices} non_geo_indices={nongeo_indices}"
     )
 
     return geo_links, nongeo_links, decisions  # keep raw decisions for logging/UI
@@ -325,9 +266,9 @@ def decide_label(front_path: str, back_path: Optional[str]) -> str:
     Local-file entrypoint used elsewhere.
     **Uses only the FRONT image** for the decider.
     """
-    req_id = str(uuid.uuid4())
+    req_id = uuid.uuid4().hex[:8]
     parts = [
-        "Classify postcard as 'geographic' or 'non-geographic' (JSON with 'decision' only).",
+        "Classify postcard as 'geographic' or 'non-geographic' (JSON with 'decision','confidence','reason').",
         _part_from_path(front_path),  # FRONT ONLY
     ]
     try:
@@ -343,11 +284,15 @@ def decide_label(front_path: str, back_path: Optional[str]) -> str:
         )
         dt = (time.perf_counter() - t0) * 1000
         if DECIDER_LOG_JSON:
-            logger.debug("decider_local_raw_json", extra={"event": "decider_local_raw_json", "req_id": req_id, "json": resp.text})
+            logger.debug(f"[decider] local_raw_json req_id={req_id} json={resp.text}")
 
-        d = _normalize_decision(json.loads(resp.text).get("decision", ""))
-        logger.info("decider_local_done", extra={"event": "decider_local_done", "req_id": req_id, "decision": d, "ms": round(dt, 1)})
-        return d
+        data = json.loads(resp.text or "{}")
+        decision = _normalize_decision(data.get("decision", ""))
+        conf = float(data.get("confidence", 0.0)) if isinstance(data.get("confidence", 0.0), (int, float, str)) else 0.0
+        reason = str(data.get("reason", "")).strip()
+
+        logger.info(f"[decider] local_done req_id={req_id} ms={round(dt,1)} decision={decision} conf={conf} reason=\"{reason}\"")
+        return decision
     except Exception as e:
-        logger.exception("decider_local_exception", extra={"event": "decider_local_exception", "req_id": req_id, "error": str(e)})
+        logger.exception(f"[decider] local_exception req_id={req_id} err={e}")
         return "non-geographic"
