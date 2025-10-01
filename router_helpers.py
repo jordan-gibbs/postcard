@@ -3,9 +3,14 @@ import os, io, json, mimetypes, requests, logging
 from typing import Optional, Tuple, List
 from google import genai
 from google.genai import types, errors
+import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 
 GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY", "")
 _client = genai.Client(api_key=GEMINI_API_KEY)
+
+DECIDER_WORKERS = int(os.getenv("DECIDER_WORKERS", "8"))  # default=8
 
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -84,21 +89,53 @@ Rules:
         # Fallback: mark as non-geographic so it doesn't block your pipeline
         return {"decision": "non-geographic", "confidence": 0.0, "reason": f"gemini_error: {e}"}
 
-def route_links(links: List[str]) -> Tuple[List[str], List[str], List[dict]]:
-    """Split a flat list of URLs [front,back, front,back, ...] into geo/non-geo."""
-    geo, nongeo, decisions = [], [], []
+def route_links(links):
+    """
+    Returns (geo_links, nongeo_links, decisions)
+    - geo_links / nongeo_links are flat lists of URLs (front, back, front, back, ...)
+    - decisions is a list aligned to pair index: {"decision": "geographic"|"non-geographic", "confidence": float, "reason": str}
+    """
+    # Build (pair_index, front, back)
+    pairs = []
     for i in range(0, len(links), 2):
         front = links[i]
         back = links[i + 1] if i + 1 < len(links) else None
-        result = classify_pair_urls(front, back) if back else {
-            "decision": "non-geographic", "confidence": 0, "reason": "No back image"
-        }
-        decisions.append({"index": i // 2, **result})
-        target = geo if result.get("decision") == "geographic" else nongeo
-        target.append(front)
+        pairs.append((i // 2, front, back))
+
+    decisions = [None] * len(pairs)
+
+    # --- Parallel classify: up to DECIDER_WORKERS at once ---
+    def _job(front_url, back_url):
+        # If you accept singletons, you can decide a default here
+        if not back_url:
+            return {"decision": "non-geographic", "confidence": 0.0, "reason": "No back image"}
+        return classify_pair_urls(front_url, back_url)
+
+    with ThreadPoolExecutor(max_workers=DECIDER_WORKERS) as ex:
+        future_map = {ex.submit(_job, front, back): idx for (idx, front, back) in pairs}
+        for fut in as_completed(future_map):
+            idx = future_map[fut]
+            try:
+                decisions[idx] = fut.result()
+            except Exception as e:
+                # Fail safe to non-geo on errors so the pipeline keeps moving
+                decisions[idx] = {
+                    "decision": "non-geographic",
+                    "confidence": 0.0,
+                    "reason": f"decider error: {e}"
+                }
+
+    # Bucketize links using the decisions, preserving original pair order
+    geo_links, nongeo_links = [], []
+    for (idx, front, back) in pairs:
+        bucket = geo_links if decisions[idx].get("decision") == "geographic" else nongeo_links
+        if front:
+            bucket.append(front)
         if back:
-            target.append(back)
-    return geo, nongeo, decisions
+            bucket.append(back)
+
+    return geo_links, nongeo_links, decisions
+
 
 # If you also expose a local-file entrypoint used elsewhere:
 def decide_label(front_path: str, back_path: Optional[str]) -> str:
