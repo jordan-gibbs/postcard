@@ -68,8 +68,6 @@ Rules:
         """
     )
     parts = [prompt, _part_from_url(front_url)]
-    if back_url:
-        parts.append(_part_from_url(back_url))
 
     try:
         resp = _client.models.generate_content(
