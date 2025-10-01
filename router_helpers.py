@@ -1,100 +1,105 @@
-# router_helpers.py
-import json
-from typing import List, Tuple, Dict
+# router_helpers.py (drop-in replacement for URL parts & classifier bits)
+import os, io, json, mimetypes, requests, logging
+from typing import Optional, Tuple, List
 from google import genai
-from mimetypes import guess_type
-from google.genai import types
+from google.genai import types, errors
 
-# Reuse the same API key your app already uses
-import os
 GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY", "")
 _client = genai.Client(api_key=GEMINI_API_KEY)
 
-# Minimal JSON schema for the decider
-_DECIDER_SCHEMA = types.Schema(
-    type="object",
-    properties={
-        "decision": types.Schema(type="string", enum=["geographic", "non-geographic"]),
-        "confidence": types.Schema(type="number"),
-        "reason": types.Schema(type="string"),
-    },
-    required=["decision", "confidence"]
+USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
 
-_DEF_PROMPT = """Decide if this postcard pair is GEOGRAPHIC or NON-GEOGRAPHIC.
+def _guess_mime(url: str, headers: requests.structures.CaseInsensitiveDict) -> str:
+    # Prefer server-provided content type; fall back to extension; default to jpeg
+    ct = headers.get("Content-Type")
+    if ct:
+        return ct.split(";")[0].strip()
+    typ, _ = mimetypes.guess_type(url)
+    return typ or "image/jpeg"
 
-GEOGRAPHIC = The main subject is a place you can point to on a map
-(city, town, park, street, bridge, building, landmark, etc.), or the
-back text/address/postmark clearly indicates a place to list. Think
-"view cards": street scenes, city halls, depots, beaches, bridges, etc.
+def _part_from_url(url: str) -> types.Part:
+    # Download bytes, then construct a Part from bytes (NOT from_uri)
+    resp = requests.get(url, timeout=20, headers={"User-Agent": USER_AGENT})
+    resp.raise_for_status()
+    mime = _guess_mime(url, resp.headers)
+    return types.Part.from_bytes(data=resp.content, mime_type=mime)
 
-NON-GEOGRAPHIC = Holiday/holiday motifs, greetings, animals, children,
-romance, humor, fantasy/illustration, topical art, etc., where no
-specific place is the main subject to list.
+# Optional: if you want to support local file paths as well
+def _part_from_path(path: str) -> types.Part:
+    with open(path, "rb") as f:
+        data = f.read()
+    mime = mimetypes.guess_type(path)[0] or "image/jpeg"
+    return types.Part.from_bytes(data=data, mime_type=mime)
 
-Return JSON only:
-{"decision":"geographic|non-geographic","confidence":0..1,"reason":"<short>"}"""
+# Pydantic-like schema for the response (if you want the SDK to validate JSON)
+# You can also keep using a literal schema dict or parse resp.text directly.
+from pydantic import BaseModel, Field
+class RouterDecision(BaseModel):
+    decision: str = Field(description="geographic or non-geographic")
+    confidence: float = Field(description="0-1 score")
+    reason: str = Field(description="brief rationale")
 
-def _part_from_path(p: str) -> types.Part:
-    with open(p, "rb") as f:
-        return types.Part.from_bytes(f.read(), mime_type="image/jpeg")
-
-def _part_from_url(u: str):
-    mt, _ = guess_type(u)
-    if not mt:
-        mt = "image/jpeg"  # sensible default
-    return types.Part.from_uri(file_uri=u, mime_type=mt)
-
-def classify_pair_paths(front_path: str, back_path: str) -> Dict:
-    """Classify a local file pair. Returns a dict with keys decision/confidence/reason."""
-    front = _part_from_path(front_path)
-    back  = _part_from_path(back_path)
-    resp = _client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=[_DEF_PROMPT, front, back],
-        config={
-            "response_mime_type": "application/json",
-            "response_schema": _DECIDER_SCHEMA,
-            # Disable “thinking”/chain-of-thought; we only want the JSON decision:
-            "thinking_config": types.ThinkingConfig(thinking_budget=0)
-        },
+def classify_pair_urls(front_url: str, back_url: Optional[str]) -> dict:
+    prompt = (
+        "Decide if this postcard (front and optionally back) is GEOGRAPHIC "
+        "(clearly tied to a place/city/state/landmark) or NON-GEOGRAPHIC. "
+        "Respond as JSON with fields: decision ('geographic'|'non-geographic'), "
+        "confidence (0..1), reason (short)."
     )
-    return json.loads(resp.text)
+    parts = [prompt, _part_from_url(front_url)]
+    if back_url:
+        parts.append(_part_from_url(back_url))
 
-def classify_pair_urls(front_url: str, back_url: str) -> Dict:
-    """Classify a URL pair. Returns a dict with keys decision/confidence/reason."""
-    front = _part_from_url(front_url)
-    back  = _part_from_url(back_url)
-    resp = _client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=[_DEF_PROMPT, front, back],
-        config={
-            "response_mime_type": "application/json",
-            "response_schema": _DECIDER_SCHEMA,
-            "thinking_config": types.ThinkingConfig(thinking_budget=0)
-        },
-    )
-    return json.loads(resp.text)
-
-def decide_label(front_path: str, back_path: str) -> str:
-    """Compatibility wrapper used by existing worker code (local paths)."""
     try:
-        out = classify_pair_paths(front_path, back_path)
-        return "geographic" if out.get("decision") == "geographic" else "non-geographic"
-    except Exception:
-        return "non-geographic"
+        resp = _client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=parts,
+            config={
+                "response_mime_type": "application/json",
+                "response_schema": RouterDecision,
+                "thinking_config": types.ThinkingConfig(thinking_budget=0),
+            },
+        )
+        return json.loads(resp.text)
+    except errors.ClientError as e:
+        logging.error(f"Gemini classify error: {e}")
+        # Fallback: mark as non-geographic so it doesn't block your pipeline
+        return {"decision": "non-geographic", "confidence": 0.0, "reason": f"gemini_error: {e}"}
 
-def route_links(links: List[str]) -> Tuple[List[str], List[str], List[Dict]]:
-    """
-    Given a flat list of alternating front/back URLs, split into
-    geographic and non-geographic link lists (keeps original order).
-    Also returns a per-pair decision record for audit.
-    """
-    geo, nongeo, audit = [], [], []
+def route_links(links: List[str]) -> Tuple[List[str], List[str], List[dict]]:
+    """Split a flat list of URLs [front,back, front,back, ...] into geo/non-geo."""
+    geo, nongeo, decisions = [], [], []
     for i in range(0, len(links), 2):
         front = links[i]
-        back = links[i+1] if i+1 < len(links) else None
-        result = classify_pair_urls(front, back) if back else {"decision": "non-geographic", "confidence": 0, "reason": "No back image"}
-        (geo if result["decision"] == "geographic" else nongeo).extend([front] + ([back] if back else []))
-        audit.append({"pair_index": i//2, "front": front, "back": back, **result})
-    return geo, nongeo, audit
+        back = links[i + 1] if i + 1 < len(links) else None
+        result = classify_pair_urls(front, back) if back else {
+            "decision": "non-geographic", "confidence": 0, "reason": "No back image"
+        }
+        decisions.append({"index": i // 2, **result})
+        target = geo if result.get("decision") == "geographic" else nongeo
+        target.append(front)
+        if back:
+            target.append(back)
+    return geo, nongeo, decisions
+
+# If you also expose a local-file entrypoint used elsewhere:
+def decide_label(front_path: str, back_path: Optional[str]) -> str:
+    parts = [
+        "Classify postcard as 'geographic' or 'non-geographic' (JSON with 'decision' only).",
+        _part_from_path(front_path),
+    ]
+    if back_path:
+        parts.append(_part_from_path(back_path))
+    resp = _client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=parts,
+        config={
+            "response_mime_type": "application/json",
+            "response_schema": RouterDecision,
+            "thinking_config": types.ThinkingConfig(thinking_budget=0),
+        },
+    )
+    return json.loads(resp.text).get("decision", "non-geographic")
